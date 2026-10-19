@@ -95,22 +95,29 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings) {
+    _init(settings, iconPath) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Symbolic theme icon: monochrome silhouette automatically recolored
-        // to the panel foreground, matching the system indicators.
-        this._icon = new St.Icon({
-            icon_name: 'input-mouse-symbolic',
-            style_class: 'system-status-icon',
-        });
+        // Primary icon: the extension's bundled icons/icon-mouse.png (black
+        // silhouette on transparency). Loaded as a file icon so the alpha
+        // channel acts as a mask and St paints it with the panel foreground
+        // color, exactly like symbolic icons. Fallback: the 🖱 emoji in the
+        // label when the file is missing.
+        this._icon = null;
+        if (iconPath && Gio.File.new_for_path(iconPath).query_exists(null)) {
+            this._icon = new St.Icon({
+                gicon: Gio.FileIcon.new(Gio.File.new_for_path(iconPath)),
+                style_class: 'system-status-icon',
+            });
+        }
         this._label = new St.Label({
-            text: '…',
+            text: this._icon ? '…' : '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
             style: 'font-size: 0.85em;',
         });
         const box = new St.BoxLayout({vertical: false});
-        box.add_child(this._icon);
+        if (this._icon)
+            box.add_child(this._icon);
         box.add_child(this._label);
         // BoxLayout fills the full button height; children center inside.
         this.add_child(box);
@@ -204,13 +211,14 @@ class BatteryIndicator extends PanelMenu.Button {
             `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
+        const pfx = this._icon ? '' : '🖱 ';
         if (known.length === 0 && pids.length === 0) {
-            this._label.text = ' —';
+            this._label.text = `${pfx}—`;
             return false;
         }
         if (known.length === 0) {
             // Driver bound but nothing has reported yet (mouse enumerating).
-            this._label.text = ' …';
+            this._label.text = `${pfx}…`;
             return false;
         }
         const parts = known.map(pid => {
@@ -218,7 +226,7 @@ class BatteryIndicator extends PanelMenu.Button {
             this._trackLowBattery(pid, d);
             return formatDevice(d);
         });
-        this._label.text = ` ${parts.join(' ')}`;
+        this._label.text = `${pfx}${parts.join(' ')}`;
         return live.length > 0;
     }
 
@@ -282,7 +290,8 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(this.getSettings());
+        this._indicator = new BatteryIndicator(
+            this.getSettings(), `${this.path}/icons/icon-mouse.png`);
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
