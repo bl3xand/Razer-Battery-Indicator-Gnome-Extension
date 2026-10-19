@@ -75,8 +75,7 @@ function readInt(path) {
 /** One panel entry per live device: "100%" or "85% ⚡" (gold bolt). */
 function formatDevice(device) {
     const pct = Math.round(device.level * 100 / 255);
-    const bolt = device.charging
-        ? ` <span foreground="#f5c211">⚡</span>` : '';
+    const bolt = device.charging ? ' ⚡' : '';
     return `${pct}%${bolt}`;
 }
 
@@ -88,8 +87,7 @@ class BatteryIndicator extends PanelMenu.Button {
             text: '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
             style: 'font-size: 0.85em;',
-            use_markup: true,
-        });
+            });
         this.add_child(this._label);
         this._lowNotified = {};
         this._timeoutId = null;
