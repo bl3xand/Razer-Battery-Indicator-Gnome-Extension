@@ -3,7 +3,6 @@
 Shows the battery level of Razer wireless devices (via the OpenRazer kernel
 driver) directly in the GNOME top panel.
 
-![panel](battery-razer@bl3xand.dev/panel.png)
 
 ## Features
 
