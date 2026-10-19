@@ -6,7 +6,7 @@ import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {Extension, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/misc/extension.js';
+import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const STARTUP_RETRY_SEC = 2;
