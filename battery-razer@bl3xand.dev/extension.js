@@ -11,6 +11,15 @@ import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/ex
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const STARTUP_RETRY_SEC = 2;
 const HOTPLUG_DEBOUNCE_SEC = 1;
+// While the mouse talks over one transport (cable or dongle), the sysfs node
+// of the other transport lingers but reports raw 0. A pid reading 0 for
+// longer than this is a ghost transport — dropped rather than held.
+const GHOST_TIMEOUT_SEC = 30;
+// sysfs exposes no change events for charge level/status (inotify only sees
+// directory entries, not attribute values), so the only way to catch a
+// charging flip quickly is to poll. razer-tray polls every 5 s; reading two
+// tiny sysfs files twice per interface at that rate costs nothing.
+const ACTIVE_POLL_SEC = 5;
 
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color emoji.
@@ -87,11 +96,15 @@ class BatteryIndicator extends PanelMenu.Button {
         this._settings = settings;
         this._label = new St.Label({
             text: '🖱 …',
-            y_align: Clutter.ActorAlign.CENTER,
-            y_expand: true,
-            style: 'font-size: 0.85em; margin: 0 2px;',
+            style: 'font-size: 0.85em;',
         });
-        this.add_child(this._label);
+        // St.Bin fills the full button height and centers the label inside;
+        // a bare label only centers within its own (smaller) allocation box.
+        this.add_child(new St.Bin({
+            child: this._label,
+            y_expand: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
         this._lowNotified = {};
         this._lastKnown = {};
         this._timeoutId = null;
@@ -145,8 +158,10 @@ class BatteryIndicator extends PanelMenu.Button {
 
     _startSlowPoll() {
         this._removeTimeout('_timeoutId');
+        const interval = this._anyDevicePresent()
+            ? ACTIVE_POLL_SEC : this._settings.get_int('poll-seconds');
         this._timeoutId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, this._settings.get_int('poll-seconds'), () => {
+            GLib.PRIORITY_DEFAULT, interval, () => {
                 if (!this._refresh()) {
                     // All devices asleep — poll fast until one wakes up,
                     // otherwise the first reading after wake is delayed by
@@ -155,8 +170,27 @@ class BatteryIndicator extends PanelMenu.Button {
                     this._startStartupRetry();
                     return GLib.SOURCE_REMOVE;
                 }
-                return GLib.SOURCE_CONTINUE;
+                this._startSlowPoll(); // re-pick interval after state change
+                return GLib.SOURCE_REMOVE;
             });
+    }
+
+    _anyDevicePresent() {
+        // True if the driver currently exposes at least one battery node
+        // (device awake or ghost), i.e. polling at ACTIVE_POLL_SEC matters.
+        try {
+            const e = Gio.File.new_for_path(SCAN_DIR).enumerate_children(
+                'standard::*', Gio.FileQueryInfoFlags.NONE, null);
+            try {
+                let info;
+                while ((info = e.next_file(null)) !== null)
+                    if (info.get_name().startsWith('0003:'))
+                        return true;
+            } finally {
+                e.close(null);
+            }
+        } catch (e) {}
+        return false;
     }
 
     _scheduleHotRefresh() {
@@ -192,14 +226,19 @@ class BatteryIndicator extends PanelMenu.Button {
             return false;
         const devices = readBatteries();
         const pids = Object.keys(devices);
+        const now = GLib.get_monotonic_time();
         // Hold the last known charge while a device sleeps (sysfs reads 0).
+        // A node that has read 0 for a long time is a ghost transport (the
+        // mouse moved to cable/dongle) — hold expires and it is dropped.
         for (const pid of pids) {
             if (devices[pid].level === 0 && this._lastKnown[pid]) {
-                devices[pid].level = this._lastKnown[pid].level;
-                devices[pid].charging = false; // asleep means not charging
-                devices[pid]._held = true;
+                if (now - this._lastKnown[pid].seen < GHOST_TIMEOUT_SEC * 1000) {
+                    devices[pid].level = this._lastKnown[pid].level;
+                    devices[pid].charging = false; // asleep means not charging
+                    devices[pid]._held = true;
+                }
             } else if (devices[pid].level > 0) {
-                this._lastKnown[pid] = {level: devices[pid].level};
+                this._lastKnown[pid] = {level: devices[pid].level, seen: now};
             }
         }
         // Drop devices that vanished entirely (unplugged), not just slept.
