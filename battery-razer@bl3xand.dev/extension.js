@@ -125,16 +125,7 @@ class BatteryIndicator extends PanelMenu.Button {
         // Deferred startup: the mouse may enumerate a few seconds after
         // login, so retry quickly until the first successful read, then
         // settle into the slow poll. Nothing runs on the startup path.
-        this._startupRetryId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, STARTUP_RETRY_SEC, () => {
-                if (!this._refresh()) {
-                    this._startupRetryId = null;
-                    this._startStartupRetry();
-                    return GLib.SOURCE_REMOVE;
-                }
-                this._startSlowPoll();
-                return GLib.SOURCE_REMOVE;
-            });
+        this._startStartupRetry();
 
         // Hotplug: any change in the driver directory (cable plug/unplug
         // adds or removes a device) refreshes immediately instead of
