@@ -51,7 +51,7 @@ function readBatteries() {
                 device.level = level;
             const status = readInt(`${base}/charge_status`);
             if (status !== null)
-                device.charging = device.charging || status === 1;
+                device.charging = status === 1;
         }
     } finally {
         enumerator.close(null);
@@ -73,10 +73,9 @@ function readInt(path) {
     }
 }
 
-/** One panel entry per live device: "100%" or "85% ⚡" (gold bolt). */
+/** One panel entry per live device: "100%" or "85% ⚡". */
 function formatDevice(device) {
     const pct = Math.round(device.level * 100 / 255);
-        const threshold = this._settings.get_int('low-threshold');
     const bolt = device.charging ? ' ⚡' : '';
     return `${pct}%${bolt}`;
 }
@@ -90,7 +89,7 @@ class BatteryIndicator extends PanelMenu.Button {
             text: '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
             style: 'font-size: 0.85em;',
-            });
+        });
         this.add_child(this._label);
         this._lowNotified = {};
         this._timeoutId = null;
