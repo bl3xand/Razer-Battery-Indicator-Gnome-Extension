@@ -98,16 +98,17 @@ class BatteryIndicator extends PanelMenu.Button {
     _init(settings, iconPath) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Primary icon: the extension's bundled icons/icon-mouse.png (black
-        // silhouette on transparency). Loaded as a file icon so the alpha
-        // channel acts as a mask and St paints it with the panel foreground
-        // color, exactly like symbolic icons. Fallback: the 🖱 emoji in the
-        // label when the file is missing.
+        // Primary icon: bundled icons/icon-mouse.svg (owner's vectorized
+        // silhouette, potrace). -st-icon-style: symbolic makes St paint it
+        // with the panel foreground color via its alpha/luminance mask —
+        // the PNG fallback and 🖱 emoji cover a missing file.
         this._icon = null;
-        if (iconPath && Gio.File.new_for_path(iconPath).query_exists(null)) {
+        if (Gio.File.new_for_path(`${iconPath}/icon-mouse.svg`).query_exists(null)) {
             this._icon = new St.Icon({
-                gicon: Gio.FileIcon.new(Gio.File.new_for_path(iconPath)),
+                gicon: Gio.FileIcon.new(
+                    Gio.File.new_for_path(`${iconPath}/icon-mouse.svg`)),
                 style_class: 'system-status-icon',
+                style: '-st-icon-style: symbolic;',
             });
         }
         this._label = new St.Label({
@@ -291,7 +292,7 @@ class BatteryIndicator extends PanelMenu.Button {
 export default class RazerBatteryExtension extends Extension {
     enable() {
         this._indicator = new BatteryIndicator(
-            this.getSettings(), `${this.path}/icons/icon-mouse.png`);
+            this.getSettings(), `${this.path}/icons`);
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
