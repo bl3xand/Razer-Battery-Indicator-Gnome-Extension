@@ -125,8 +125,7 @@ class BatteryIndicator extends PanelMenu.Button {
         });
         const box = new St.BoxLayout({vertical: false});
         if (this._iconPixbuf) {
-            const icon = new St.DrawingArea();
-            icon.set_size_request(ICON_PX, ICON_PX);
+            const icon = new St.DrawingArea({style: `width: ${ICON_PX}px; height: ${ICON_PX}px;`});
             icon.connect('repaint', (area) => this._paintIcon(area));
             box.add_child(icon);
         }
