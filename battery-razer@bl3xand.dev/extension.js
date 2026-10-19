@@ -167,14 +167,18 @@ class BatteryIndicator extends PanelMenu.Button {
     /** Paint the bundled mouse pixbuf with the panel foreground color. */
     _paintIcon(area) {
         const cr = area.get_context();
-        const [ok, color] = area.get_theme_node().lookup_color('foreground', false);
-        const fg = ok ? color
-            : new Clutter.Color({red: 255, green: 255, blue: 255, alpha: 255});
+        let r = 1, g = 1, b = 1, a = 1;
+        try {
+            const [ok, color] = area.get_theme_node().lookup_color('foreground', false);
+            if (ok) {
+                r = color.red / 255; g = color.green / 255;
+                b = color.blue / 255; a = color.alpha / 255;
+            }
+        } catch (e) {}
         // The pixbuf becomes the mask; the solid theme color the paint.
         GdkPixbuf.cairo_set_source_pixbuf(cr, this._iconPixbuf, 0, 0);
         const pattern = cr.getSource();
-        cr.setSourceRGBA(
-            fg.red / 255, fg.green / 255, fg.blue / 255, fg.alpha / 255);
+        cr.setSourceRGBA(r, g, b, a);
         cr.mask(pattern);
         cr.$dispose();
     }
