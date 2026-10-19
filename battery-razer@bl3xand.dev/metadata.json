@@ -3,7 +3,8 @@
   "name": "Razer Battery",
   "description": "Razer wireless device battery in the top panel, deduped by device",
   "shell-version": [
-    "50"
+    "50",
+    "51"
   ],
   "version": 1,
   "version-name": "1.0",

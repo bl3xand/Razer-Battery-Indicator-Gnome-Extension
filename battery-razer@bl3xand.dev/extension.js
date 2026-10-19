@@ -86,9 +86,9 @@ class BatteryIndicator extends PanelMenu.Button {
     _init(settings) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Icon: the mouse silhouette drawn directly from the potrace path
-        // baked into MOUSE_PATH below (no image files, no GdkPixbuf). Cairo
-        // fills it with the color contrasting the panel color-scheme.
+        // Icon: the mouse silhouette drawn from a potrace path embedded in
+        // mouseIcon.js (no image files). Cairo fills it with the color
+        // contrasting the panel color-scheme.
         this._label = new St.Label({
             text: '…',
             y_align: Clutter.ActorAlign.CENTER,
@@ -205,22 +205,19 @@ class BatteryIndicator extends PanelMenu.Button {
             `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
-        const pfx = '';
         if (known.length === 0 && pids.length === 0) {
-            this._label.text = `${pfx}—`;
+            this._label.text = '—';
             return false;
         }
         if (known.length === 0) {
             // Driver bound but nothing has reported yet (mouse enumerating).
-            this._label.text = `${pfx}…`;
+            this._label.text = '…';
             return false;
         }
-        const parts = known.map(pid => {
-            const d = devices[pid];
-            this._trackLowBattery(pid, d);
-            return formatDevice(d);
-        });
-        this._label.text = `${pfx}${parts.join(' ')}`;
+        this._label.text = known.map(pid => {
+            this._trackLowBattery(pid, devices[pid]);
+            return formatDevice(devices[pid]);
+        }).join(' ');
         return live.length > 0;
     }
 
@@ -293,6 +290,5 @@ export default class RazerBatteryExtension extends Extension {
             this._indicator.destroy();
             this._indicator = null;
         }
-        this._settings = null;
     }
 }
