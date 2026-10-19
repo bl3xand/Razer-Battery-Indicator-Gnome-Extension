@@ -2,11 +2,6 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.battery-razer"
           path="/org/gnome/shell/extensions/battery-razer/">
-    <key type="i" name="poll-seconds">
-      <default>60</default>
-      <summary>Poll interval in seconds</summary>
-      <description>How often to re-read battery levels from sysfs</description>
-    </key>
     <key type="i" name="low-threshold">
       <default>20</default>
       <summary>Low battery notification threshold, percent</summary>

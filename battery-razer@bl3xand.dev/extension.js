@@ -11,8 +11,8 @@ import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/ex
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const HOTPLUG_DEBOUNCE_SEC = 1;
 // Verbose logging to the journal (journalctl -f /usr/bin/gnome-shell |
-// grep battery-razer). Keep on while behavior is being tuned.
-const DEBUG = true;
+// grep battery-razer). Flip to true when diagnosing behavior.
+const DEBUG = false;
 // razer-tray model: one flat interval for everything (awake, asleep,
 // charging). sysfs exposes no change events, so polling is the only way;
 // 5 s reading two tiny files costs nothing, and a single constant means

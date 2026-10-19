@@ -20,18 +20,6 @@ export default class RazerBatteryPreferences extends ExtensionPreferences {
         });
         page.add(group);
 
-        const poll = new Adw.SpinRow({
-            title: _('Интервал опроса, секунд'),
-            subtitle: _('Как часто перечитывать уровень заряда'),
-            adjustment: new Gtk.Adjustment({
-                value: 60, lower: 10, upper: 600,
-                step_increment: 10, page_increment: 60,
-            }),
-        });
-        settings.bind('poll-seconds', poll, 'value',
-            Gio.SettingsBindFlags.DEFAULT);
-        group.add(poll);
-
         const threshold = new Adw.SpinRow({
             title: _('Порог уведомления, %'),
             subtitle: _('Уведомлять при разряде ниже этого уровня'),
