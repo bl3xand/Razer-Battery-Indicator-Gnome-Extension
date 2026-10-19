@@ -103,6 +103,10 @@ class BatteryIndicator extends PanelMenu.Button {
             text: '🖱 …',
             style: 'font-size: 0.85em;',
         });
+        // Small font (0.85em) centers ~1.5px high inside the pill (the
+        // emoji ascent dominates the line box) — nudge down to the pill's
+        // optical middle, matching the system indicators next to it.
+        this._label.translation_y = 2;
         // St.Bin fills the full button height and centers the label inside;
         // a bare label only centers within its own (smaller) allocation box.
         this.add_child(new St.Bin({
