@@ -101,18 +101,21 @@ class BatteryIndicator extends PanelMenu.Button {
     _init(settings, iconsDir) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Icon: the bundled vector mouse (icons/icon-mouse-symbolic.svg),
-        // rasterized once via GdkPixbuf and drawn through St.DrawingArea.
-        // Cairo paints it with the panel's foreground color (read from the
-        // theme node at repaint time), so the silhouette follows the theme —
-        // self-contained, no icon-theme installation needed. The pixbuf's
-        // alpha channel is the mask. Fallback: 🖱 emoji when SVG missing.
+        // Icon: the bundled vector mouse (icons/icon-mouse.svg). Its fill
+        // color is rewritten in memory to contrast with the panel (dark
+        // text -> black icon, light -> white), then rasterized via GdkPixbuf
+        // and drawn through St.DrawingArea. Fallback: 🖱 emoji.
         this._iconPixbuf = null;
-        const svg = `${iconsDir}/icon-mouse-symbolic.svg`;
+        const svg = `${iconsDir}/icon-mouse.svg`;
         if (Gio.File.new_for_path(svg).query_exists(null)) {
             try {
-                this._iconPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(
-                    svg, ICON_PX, ICON_PX);
+                const [, contents] = Gio.File.new_for_path(svg).load_contents(null);
+                const text = new TextDecoder().decode(contents)
+                    .replace(/fill="#[0-9a-fA-F]{6}"/g,
+                        `fill="${this._panelTextIsDark() ? '#000000' : '#ffffff'}"`);
+                this._iconPixbuf = GdkPixbuf.Pixbuf.new_from_stream(
+                    Gio.MemoryInputStream.new_from_bytes(
+                        new GLib.Bytes(text)), ICON_PX, ICON_PX);
             } catch (e) {
                 this._iconPixbuf = null;
             }
@@ -164,36 +167,42 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    /** Paint the bundled mouse pixbuf with the panel foreground color. */
+    /** Panel text is dark (light theme) or light (dark theme). */
+    _panelTextIsDark() {
+        try {
+            const scheme = new Gio.Settings({schema_id:
+                'org.gnome.desktop.interface'}).get_string('color-scheme');
+            return scheme.includes('light') && !scheme.includes('prefer-dark');
+        } catch (e) {
+            return false; // default to light text (dark theme)
+        }
+    }
+
+    /** Paint the mouse pixbuf; the fill color is already baked into it. */
     _paintIcon(area) {
         const cr = area.get_context();
-        let r = 1, g = 1, b = 1, a = 1;
-        try {
-            const [ok, color] = area.get_theme_node().lookup_color('foreground', false);
-            if (ok) {
-                r = color.red / 255; g = color.green / 255;
-                b = color.blue / 255; a = color.alpha / 255;
-            }
-        } catch (e) {}
-        cr.setSourceRGBA(r, g, b, a);
-        // Draw the silhouette as rectangles: the pixbuf is a pure black
-        // shape on transparency, so alpha > 0 means "paint here". GdkPixbuf
-        // has no cairo helper under GJS, so walk the pixels directly.
         const pb = this._iconPixbuf;
         const pixels = pb.get_pixels();
         const nch = pb.get_n_channels();
         const stride = pb.get_rowstride();
         const w = pb.get_width(), h = pb.get_height();
-        const step = 1; // pixbuf is already small (ICON_PX)
-        for (let y = 0; y < h; y += step) {
+        // The silhouette is a single solid color — sample it from the first
+        // opaque pixel and use as the Cairo source, then draw the shape as
+        // rectangles (alpha > 0 = paint) since GdkPixbuf has no cairo
+        // helper under GJS.
+        const idx = pixels.findIndex((_, i) => i % nch === nch - 1 && _ > 127);
+        const base = idx - (nch - 1);
+        cr.setSourceRGBA(
+            pixels[base] / 255, pixels[base + 1] / 255,
+            pixels[base + 2] / 255, 1);
+        for (let y = 0; y < h; y++) {
             let run = -1;
             for (let x = 0; x <= w; x++) {
-                const opaque = x < w &&
-                    pixels[y * stride + x * nch + 3] > 127;
+                const opaque = x < w && pixels[y * stride + x * nch + 3] > 127;
                 if (opaque && run < 0)
                     run = x;
                 else if (!opaque && run >= 0) {
-                    cr.rectangle(run, y, x - run, step);
+                    cr.rectangle(run, y, x - run, 1);
                     run = -1;
                 }
             }
