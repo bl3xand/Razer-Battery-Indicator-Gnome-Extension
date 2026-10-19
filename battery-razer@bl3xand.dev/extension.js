@@ -95,18 +95,14 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings, iconPath) {
+    _init(settings) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Custom mouse icon bundled with the extension (icons/icon-mouse.png:
-        // black silhouette on transparency). Loading it as a GThemedIcon via
-        // a file makes St paint it with the panel's foreground color — the
-        // PNG alpha channel acts as the mask, so it follows light/dark theme.
-        const file = Gio.File.new_for_path(iconPath);
+        // Symbolic theme icon: monochrome silhouette automatically recolored
+        // to the panel foreground, matching the system indicators.
         this._icon = new St.Icon({
-            gicon: Gio.FileIcon.new(file),
+            icon_name: 'input-mouse-symbolic',
             style_class: 'system-status-icon',
-            fallback_icon_name: 'input-mouse-symbolic',
         });
         this._label = new St.Label({
             text: '…',
@@ -286,8 +282,7 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(
-            this.getSettings(), `${this.path}/icons/icon-mouse.png`);
+        this._indicator = new BatteryIndicator(this.getSettings());
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
