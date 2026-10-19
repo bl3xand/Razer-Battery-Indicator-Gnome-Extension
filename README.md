@@ -1,6 +1,6 @@
-# Razer Battery Indicator — GNOME Shell Extension
+# Razer Mouse Battery Indicator — GNOME Shell Extension
 
-Shows the battery level of Razer wireless devices (via the OpenRazer kernel
+Shows the battery level of a Razer wireless mouse (via the OpenRazer kernel
 driver) directly in the GNOME top panel.
 
 ![screenshot](screenshot.png)
