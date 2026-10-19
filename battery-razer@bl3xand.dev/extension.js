@@ -175,11 +175,30 @@ class BatteryIndicator extends PanelMenu.Button {
                 b = color.blue / 255; a = color.alpha / 255;
             }
         } catch (e) {}
-        // The pixbuf becomes the mask; the solid theme color the paint.
-        GdkPixbuf.cairo_set_source_pixbuf(cr, this._iconPixbuf, 0, 0);
-        const pattern = cr.getSource();
         cr.setSourceRGBA(r, g, b, a);
-        cr.mask(pattern);
+        // Draw the silhouette as rectangles: the pixbuf is a pure black
+        // shape on transparency, so alpha > 0 means "paint here". GdkPixbuf
+        // has no cairo helper under GJS, so walk the pixels directly.
+        const pb = this._iconPixbuf;
+        const pixels = pb.get_pixels();
+        const nch = pb.get_n_channels();
+        const stride = pb.get_rowstride();
+        const w = pb.get_width(), h = pb.get_height();
+        const step = 1; // pixbuf is already small (ICON_PX)
+        for (let y = 0; y < h; y += step) {
+            let run = -1;
+            for (let x = 0; x <= w; x++) {
+                const opaque = x < w &&
+                    pixels[y * stride + x * nch + 3] > 127;
+                if (opaque && run < 0)
+                    run = x;
+                else if (!opaque && run >= 0) {
+                    cr.rectangle(run, y, x - run, step);
+                    run = -1;
+                }
+            }
+        }
+        cr.fill();
         cr.$dispose();
     }
 
