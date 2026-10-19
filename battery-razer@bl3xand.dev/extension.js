@@ -3,28 +3,13 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
-import GdkPixbuf from 'gi://GdkPixbuf';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-
-const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
-const HOTPLUG_DEBOUNCE_SEC = 1;
-// Verbose logging to the journal (journalctl -f /usr/bin/gnome-shell |
-// grep battery-razer). Flip to true when diagnosing behavior.
-const DEBUG = false;
-// razer-tray model: one flat interval for everything (awake, asleep,
-// charging). sysfs exposes no change events, so polling is the only way;
-// 5 s reading two tiny files costs nothing, and a single constant means
-// no timer-state machine to get wrong.
-const POLL_SEC = 5;
-// Panel icon size, matches the system-status-icon class.
-const ICON_PX = 16;
-
-// U+FE0E forces text presentation of the emoji: rendered as a monochrome
-// glyph that inherits the label's foreground color instead of full-color emoji.
-const BOLT = '⚡︎';
+import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, DEBUG, SCAN_DIR, BOLT}
+    from './constants.js';
+import {paintMouse, panelTextIsDark} from './mouseIcon.js';
 
 const DECODER = new TextDecoder();
 
@@ -98,40 +83,23 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings, iconsDir) {
+    _init(settings) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Icon: the bundled vector mouse (icons/icon-mouse.svg). Its fill
-        // color is rewritten in memory to contrast with the panel (dark
-        // text -> black icon, light -> white), then rasterized via GdkPixbuf
-        // and drawn through St.DrawingArea. Fallback: 🖱 emoji.
-        this._iconPixbuf = null;
-        const svg = `${iconsDir}/icon-mouse.svg`;
-        if (Gio.File.new_for_path(svg).query_exists(null)) {
-            try {
-                const [, contents] = Gio.File.new_for_path(svg).load_contents(null);
-                const text = new TextDecoder().decode(contents)
-                    .replace(/fill="#[0-9a-fA-F]{6}"/g,
-                        `fill="${this._panelTextIsDark() ? '#000000' : '#ffffff'}"`);
-                this._iconPixbuf = GdkPixbuf.Pixbuf.new_from_stream(
-                    Gio.MemoryInputStream.new_from_bytes(
-                        new GLib.Bytes(text)), ICON_PX, ICON_PX);
-            } catch (e) {
-                this._iconPixbuf = null;
-            }
-        }
+        // Icon: the mouse silhouette drawn directly from the potrace path
+        // baked into MOUSE_PATH below (no image files, no GdkPixbuf). Cairo
+        // fills it with the color contrasting the panel color-scheme.
         this._label = new St.Label({
-            text: this._iconPixbuf ? '…' : '🖱 …',
+            text: '…',
             y_align: Clutter.ActorAlign.CENTER,
             y_expand: true,
             style: 'font-size: 0.85em; margin: 0 2px;',
         });
         const box = new St.BoxLayout({vertical: false});
-        if (this._iconPixbuf) {
-            const icon = new St.DrawingArea({style: `width: ${ICON_PX}px; height: ${ICON_PX}px;`});
-            icon.connect('repaint', (area) => this._paintIcon(area));
-            box.add_child(icon);
-        }
+        const icon = new St.DrawingArea(
+            {style: `width: ${ICON_PX}px; height: ${ICON_PX}px;`});
+        icon.connect('repaint', (area) => this._paintIcon(area));
+        box.add_child(icon);
         box.add_child(this._label);
         // BoxLayout fills the full button height; children center inside.
         box.y_expand = true;
@@ -167,47 +135,10 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    /** Panel text is dark (light theme) or light (dark theme). */
-    _panelTextIsDark() {
-        try {
-            const scheme = new Gio.Settings({schema_id:
-                'org.gnome.desktop.interface'}).get_string('color-scheme');
-            return scheme.includes('light') && !scheme.includes('prefer-dark');
-        } catch (e) {
-            return false; // default to light text (dark theme)
-        }
-    }
-
-    /** Paint the mouse pixbuf; the fill color is already baked into it. */
+    /** Draw the mouse silhouette (see mouseIcon.js). */
     _paintIcon(area) {
         const cr = area.get_context();
-        const pb = this._iconPixbuf;
-        const pixels = pb.get_pixels();
-        const nch = pb.get_n_channels();
-        const stride = pb.get_rowstride();
-        const w = pb.get_width(), h = pb.get_height();
-        // The silhouette is a single solid color — sample it from the first
-        // opaque pixel and use as the Cairo source, then draw the shape as
-        // rectangles (alpha > 0 = paint) since GdkPixbuf has no cairo
-        // helper under GJS.
-        const idx = pixels.findIndex((_, i) => i % nch === nch - 1 && _ > 127);
-        const base = idx - (nch - 1);
-        cr.setSourceRGBA(
-            pixels[base] / 255, pixels[base + 1] / 255,
-            pixels[base + 2] / 255, 1);
-        for (let y = 0; y < h; y++) {
-            let run = -1;
-            for (let x = 0; x <= w; x++) {
-                const opaque = x < w && pixels[y * stride + x * nch + 3] > 127;
-                if (opaque && run < 0)
-                    run = x;
-                else if (!opaque && run >= 0) {
-                    cr.rectangle(run, y, x - run, 1);
-                    run = -1;
-                }
-            }
-        }
-        cr.fill();
+        paintMouse(cr, area.width, panelTextIsDark());
         cr.$dispose();
     }
 
@@ -270,7 +201,7 @@ class BatteryIndicator extends PanelMenu.Button {
             `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
-        const pfx = this._iconPixbuf ? '' : '🖱 ';
+        const pfx = '';
         if (known.length === 0 && pids.length === 0) {
             this._label.text = `${pfx}—`;
             return false;
@@ -349,8 +280,7 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(
-            this.getSettings(), `${this.path}/icons`);
+        this._indicator = new BatteryIndicator(this.getSettings());
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
