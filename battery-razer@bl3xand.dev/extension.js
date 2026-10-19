@@ -11,10 +11,9 @@ import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/ex
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const STARTUP_RETRY_SEC = 2;
 const HOTPLUG_DEBOUNCE_SEC = 1;
-// While the mouse talks over one transport (cable or dongle), the sysfs node
-// of the other transport lingers but reports raw 0. A pid reading 0 for
-// longer than this is a ghost transport — dropped rather than held.
-const GHOST_TIMEOUT_SEC = 30;
+// Verbose logging to the journal (journalctl -f /usr/bin/gnome-shell |
+// grep battery-razer). Keep on while behavior is being tuned.
+const DEBUG = true;
 // sysfs exposes no change events for charge level/status (inotify only sees
 // directory entries, not attribute values), so the only way to catch a
 // charging flip quickly is to poll. razer-tray polls every 5 s; reading two
@@ -26,6 +25,12 @@ const ACTIVE_POLL_SEC = 5;
 const BOLT = '⚡︎';
 
 const DECODER = new TextDecoder();
+
+/** Debug log, greppable in the journal as "battery-razer". */
+function debug(...args) {
+    if (DEBUG)
+        console.log(`battery-razer: ${args.join(' ')}`);
+}
 
 /**
  * Read every battery interface exposed by the openrazer kernel driver and
@@ -135,7 +140,7 @@ class BatteryIndicator extends PanelMenu.Button {
             this._monitor = Gio.File.new_for_path(SCAN_DIR).monitor_directory(
                 Gio.FileMonitorFlags.NONE, null);
             this._monitorId = this._monitor.connect('changed',
-                () => this._scheduleHotRefresh());
+                () => { debug('hotplug event'); this._scheduleHotRefresh(); });
         } catch (e) {
             this._monitor = null; // sysfs watches unsupported — poll only
         }
@@ -166,6 +171,7 @@ class BatteryIndicator extends PanelMenu.Button {
                     // All devices asleep — poll fast until one wakes up,
                     // otherwise the first reading after wake is delayed by
                     // a full slow interval.
+                    debug('no fresh data -> fast retry mode');
                     this._removeTimeout('_timeoutId');
                     this._startStartupRetry();
                     return GLib.SOURCE_REMOVE;
@@ -226,30 +232,39 @@ class BatteryIndicator extends PanelMenu.Button {
             return false;
         const devices = readBatteries();
         const pids = Object.keys(devices);
-        const now = GLib.get_monotonic_time();
+        const t = new Date().toISOString().slice(11, 23);
         // Hold the last known charge while a device sleeps (sysfs reads 0).
-        // A node that has read 0 for a long time is a ghost transport (the
-        // mouse moved to cable/dongle) — hold expires and it is dropped.
+        // The same physical mouse can appear via two transports (cable +
+        // dongle): while one is live, a peer reading 0 is a ghost and is
+        // NOT held; only when NOTHING is live do we hold (mouse is asleep).
+        const livePids = pids.filter(pid => devices[pid].level > 0);
         for (const pid of pids) {
-            if (devices[pid].level === 0 && this._lastKnown[pid]) {
-                if (now - this._lastKnown[pid].seen < GHOST_TIMEOUT_SEC * 1000) {
-                    devices[pid].level = this._lastKnown[pid].level;
-                    devices[pid].charging = false; // asleep means not charging
-                    devices[pid]._held = true;
-                }
+            if (devices[pid].level === 0 && this._lastKnown[pid] &&
+                livePids.length === 0) {
+                devices[pid].level = this._lastKnown[pid].level;
+                devices[pid].charging = false; // asleep means not charging
+                devices[pid]._held = true;
             } else if (devices[pid].level > 0) {
-                this._lastKnown[pid] = {level: devices[pid].level, seen: now};
+                this._lastKnown[pid] = {level: devices[pid].level};
             }
         }
         // Drop devices that vanished entirely (unplugged), not just slept.
         for (const pid in this._lastKnown)
-            if (!(pid in devices))
+            if (!(pid in devices)) {
+                debug(t, `forget ${pid.slice(-4)} (node gone)`);
                 delete this._lastKnown[pid];
+            }
         // Live = reported a fresh nonzero reading this cycle.
         const live = pids.filter(pid => devices[pid].level > 0 && !devices[pid]._held);
         for (const pid of pids)
             delete devices[pid]._held;
         const known = pids.filter(pid => devices[pid].level > 0);
+        debug(t,
+            `raw [${pids.map(pid =>
+                `${pid.slice(-4)}=${devices[pid].level}${devices[pid].charging ? ',chg' : ''}`
+            ).join(' ')}]`,
+            `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
+            live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
         if (known.length === 0 && pids.length === 0) {
             this._label.text = '🖱 —';
