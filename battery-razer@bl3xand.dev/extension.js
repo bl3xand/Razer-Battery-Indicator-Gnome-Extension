@@ -98,6 +98,10 @@ class BatteryIndicator extends PanelMenu.Button {
         const box = new St.BoxLayout({vertical: false});
         const icon = new St.DrawingArea(
             {style: `width: ${ICON_PX}px; height: ${ICON_PX}px;`});
+        // Children must both stretch to the box height AND center in it —
+        // without y_align a Box child sticks to the top of the pill.
+        icon.y_align = Clutter.ActorAlign.CENTER;
+        icon.y_expand = true;
         icon.connect('repaint', (area) => this._paintIcon(area));
         box.add_child(icon);
         box.add_child(this._label);
