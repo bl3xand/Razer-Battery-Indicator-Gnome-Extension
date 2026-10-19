@@ -98,21 +98,22 @@ class BatteryIndicator extends PanelMenu.Button {
     _init(settings) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
+        // Symbolic theme icon: monochrome silhouette that is automatically
+        // recolored to the panel foreground, matching system indicators.
+        this._icon = new St.Icon({
+            icon_name: 'input-mouse-symbolic',
+            style_class: 'system-status-icon',
+        });
         this._label = new St.Label({
-            text: '🖱︎ …',
+            text: '…',
+            y_align: Clutter.ActorAlign.CENTER,
             style: 'font-size: 0.85em;',
         });
-        // Small font (0.85em) centers ~1.5px high inside the pill (the
-        // emoji ascent dominates the line box) — nudge down to the pill's
-        // optical middle, matching the system indicators next to it.
-        this._label.translation_y = 2;
-        // St.Bin fills the full button height and centers the label inside;
-        // a bare label only centers within its own (smaller) allocation box.
-        this.add_child(new St.Bin({
-            child: this._label,
-            y_expand: true,
-            y_align: Clutter.ActorAlign.CENTER,
-        }));
+        const box = new St.BoxLayout({vertical: false});
+        box.add_child(this._icon);
+        box.add_child(this._label);
+        // BoxLayout fills the full button height; children center inside.
+        this.add_child(box);
         this._lowNotified = {};
         this._lastKnown = {};
         this._timeoutId = null;
@@ -204,12 +205,12 @@ class BatteryIndicator extends PanelMenu.Button {
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
         if (known.length === 0 && pids.length === 0) {
-            this._label.text = '🖱︎ —';
+            this._label.text = ' —';
             return false;
         }
         if (known.length === 0) {
             // Driver bound but nothing has reported yet (mouse enumerating).
-            this._label.text = '🖱︎ …';
+            this._label.text = ' …';
             return false;
         }
         const parts = known.map(pid => {
@@ -217,7 +218,7 @@ class BatteryIndicator extends PanelMenu.Button {
             this._trackLowBattery(pid, d);
             return formatDevice(d);
         });
-        this._label.text = `🖱︎ ${parts.join(' ')}`;
+        this._label.text = ` ${parts.join(' ')}`;
         return live.length > 0;
     }
 
