@@ -9,16 +9,15 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
-const STARTUP_RETRY_SEC = 2;
 const HOTPLUG_DEBOUNCE_SEC = 1;
 // Verbose logging to the journal (journalctl -f /usr/bin/gnome-shell |
 // grep battery-razer). Keep on while behavior is being tuned.
 const DEBUG = true;
-// sysfs exposes no change events for charge level/status (inotify only sees
-// directory entries, not attribute values), so the only way to catch a
-// charging flip quickly is to poll. razer-tray polls every 5 s; reading two
-// tiny sysfs files twice per interface at that rate costs nothing.
-const ACTIVE_POLL_SEC = 5;
+// razer-tray model: one flat interval for everything (awake, asleep,
+// charging). sysfs exposes no change events, so polling is the only way;
+// 5 s reading two tiny files costs nothing, and a single constant means
+// no timer-state machine to get wrong.
+const POLL_SEC = 5;
 
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color emoji.
@@ -118,14 +117,18 @@ class BatteryIndicator extends PanelMenu.Button {
         this._lastKnown = {};
         this._timeoutId = null;
         this._debounceId = null;
-        this._startupRetryId = null;
         this._monitorId = null;
         this._destroyed = false;
 
-        // Deferred startup: the mouse may enumerate a few seconds after
-        // login, so retry quickly until the first successful read, then
-        // settle into the slow poll. Nothing runs on the startup path.
-        this._startStartupRetry();
+        // Single flat poll, razer-tray style: one interval for awake,
+        // asleep and no-devices alike. First refresh runs right here so
+        // the indicator is populated without waiting a cycle.
+        this._refresh();
+        this._timeoutId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, POLL_SEC, () => {
+                this._refresh();
+                return GLib.SOURCE_CONTINUE;
+            });
 
         // Hotplug: any change in the driver directory (cable plug/unplug
         // adds or removes a device) refreshes immediately instead of
@@ -141,75 +144,14 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    _startStartupRetry() {
-        if (this._startupRetryId !== null)
-            return;
-        this._startupRetryId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, STARTUP_RETRY_SEC, () => {
-                this._startupRetryId = null;
-                if (this._refresh()) {
-                    this._startSlowPoll();
-                    return GLib.SOURCE_REMOVE;
-                }
-                this._startStartupRetry();
-                return GLib.SOURCE_REMOVE;
-            });
-    }
-
-    _startSlowPoll() {
-        this._removeTimeout('_timeoutId');
-        const interval = this._anyDevicePresent()
-            ? ACTIVE_POLL_SEC : this._settings.get_int('poll-seconds');
-        this._timeoutId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, interval, () => {
-                if (!this._refresh()) {
-                    // All devices asleep — poll fast until one wakes up,
-                    // otherwise the first reading after wake is delayed by
-                    // a full slow interval.
-                    debug('no fresh data -> fast retry mode');
-                    this._removeTimeout('_timeoutId');
-                    this._startStartupRetry();
-                    return GLib.SOURCE_REMOVE;
-                }
-                this._startSlowPoll(); // re-pick interval after state change
-                return GLib.SOURCE_REMOVE;
-            });
-    }
-
-    _anyDevicePresent() {
-        // True if the driver currently exposes at least one battery node
-        // (device awake or ghost), i.e. polling at ACTIVE_POLL_SEC matters.
-        try {
-            const e = Gio.File.new_for_path(SCAN_DIR).enumerate_children(
-                'standard::*', Gio.FileQueryInfoFlags.NONE, null);
-            try {
-                let info;
-                while ((info = e.next_file(null)) !== null)
-                    if (info.get_name().startsWith('0003:'))
-                        return true;
-            } finally {
-                e.close(null);
-            }
-        } catch (e) {}
-        return false;
-    }
-
     _scheduleHotRefresh() {
         // Enumeration fires a burst of events — one refresh after the burst.
-        // If no live device remains (e.g. everything went idle), fall back
-        // to fast retries until one reappears.
         if (this._debounceId !== null)
             return;
         this._debounceId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, HOTPLUG_DEBOUNCE_SEC, () => {
                 this._debounceId = null;
-                if (this._refresh()) {
-                    if (this._timeoutId === null)
-                        this._startSlowPoll();
-                } else {
-                    this._removeTimeout('_timeoutId');
-                    this._startStartupRetry();
-                }
+                this._refresh();
                 return GLib.SOURCE_REMOVE;
             });
     }
@@ -327,7 +269,6 @@ class BatteryIndicator extends PanelMenu.Button {
         this._destroyed = true;
         this._removeTimeout('_timeoutId');
         this._removeTimeout('_debounceId');
-        this._removeTimeout('_startupRetryId');
         if (this._monitor) {
             if (this._monitorId)
                 this._monitor.disconnect(this._monitorId);
