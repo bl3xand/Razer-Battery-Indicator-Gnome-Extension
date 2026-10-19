@@ -5,12 +5,11 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
+import {Extension} from 'resource:///org/gnome/Shell/Extensions/js/misc/extension.js';
 
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
-const POLL_SEC = 60;
 const STARTUP_RETRY_SEC = 2;
 const HOTPLUG_DEBOUNCE_SEC = 1;
-const LOW_THRESHOLD = 20;
 
 const DECODER = new TextDecoder();
 
@@ -49,8 +48,9 @@ function readBatteries() {
             const level = readInt(`${base}/charge_level`);
             if (level !== null && level > device.level)
                 device.level = level;
-            if (readInt(`${base}/charge_status`) === 1)
-                device.charging = true;
+            const status = readInt(`${base}/charge_status`);
+            if (status !== null)
+                device.charging = device.charging || status === 1;
         }
     } finally {
         enumerator.close(null);
@@ -75,14 +75,16 @@ function readInt(path) {
 /** One panel entry per live device: "100%" or "85% ⚡" (gold bolt). */
 function formatDevice(device) {
     const pct = Math.round(device.level * 100 / 255);
+        const threshold = this._settings.get_int('low-threshold');
     const bolt = device.charging ? ' ⚡' : '';
     return `${pct}%${bolt}`;
 }
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init() {
+    _init(settings) {
         super._init(0.0, 'Razer Battery');
+        this._settings = settings;
         this._label = new St.Label({
             text: '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
@@ -142,20 +144,28 @@ class BatteryIndicator extends PanelMenu.Button {
     _startSlowPoll() {
         this._removeTimeout('_timeoutId');
         this._timeoutId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, POLL_SEC, () => {
+            GLib.PRIORITY_DEFAULT, this._settings.get_int('poll-seconds'), () => {
                 this._refresh();
                 return GLib.SOURCE_CONTINUE;
             });
     }
 
     _scheduleHotRefresh() {
-        // Enumeration fires a burst of events — one refresh after the burst
+        // Enumeration fires a burst of events — one refresh after the burst.
+        // If no live device remains (e.g. everything went idle), fall back
+        // to fast retries until one reappears.
         if (this._debounceId !== null)
             return;
         this._debounceId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, HOTPLUG_DEBOUNCE_SEC, () => {
                 this._debounceId = null;
-                this._refresh();
+                if (this._refresh()) {
+                    if (this._timeoutId === null)
+                        this._startSlowPoll();
+                } else {
+                    this._removeTimeout('_timeoutId');
+                    this._startStartupRetry();
+                }
                 return GLib.SOURCE_REMOVE;
             });
     }
@@ -188,7 +198,8 @@ class BatteryIndicator extends PanelMenu.Button {
 
     _trackLowBattery(pid, device) {
         const pct = Math.round(device.level * 100 / 255);
-        if (pct <= LOW_THRESHOLD && !device.charging) {
+        const threshold = this._settings.get_int('low-threshold');
+        if (pct <= threshold && !device.charging) {
             if (!this._lowNotified[pid]) {
                 this._lowNotified[pid] = true;
                 Main.notify('Razer: батарея садится',
@@ -214,9 +225,9 @@ class BatteryIndicator extends PanelMenu.Button {
     }
 });
 
-export default class RazerBatteryExtension {
+export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator();
+        this._indicator = new BatteryIndicator(this.getSettings());
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
@@ -225,5 +236,6 @@ export default class RazerBatteryExtension {
             this._indicator.destroy();
             this._indicator = null;
         }
+        this._settings = null;
     }
 }
