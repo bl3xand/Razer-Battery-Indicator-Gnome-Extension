@@ -70,24 +70,51 @@ class BatteryIndicator extends PanelMenu.Button {
             text: '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
             style: 'font-size: 0.85em;',
+            use_markup: true,
         });
         this.add_child(this._label);
         this._lowNotified = {};
         this._timeoutId = null;
-        // defer the first read off the startup path; retry fast until the
-        // mouse enumerates (USB/driver can lag a few seconds after login),
-        // then settle into the slow poll
+        this._debounceId = null;
+        // deferred startup: retry fast until the mouse enumerates
+        // (USB/driver can lag a few seconds after login), then slow poll
         this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
             const found = this._refresh();
-            if (!found) {
-                return GLib.SOURCE_CONTINUE; // keep retrying every 2 s
-            }
-            this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, POLL_SEC, () => {
-                this._refresh();
+            if (!found)
                 return GLib.SOURCE_CONTINUE;
-            });
+            this._startSlowPoll();
             return GLib.SOURCE_REMOVE;
         });
+        // watch the driver dir: cable plug/unplug (new PID) or dongle events
+        // trigger an immediate refresh instead of waiting for the next poll
+        try {
+            this._monitor = Gio.File.new_for_path(SCAN_DIR).monitor_directory(
+                Gio.FileMonitorFlags.NONE, null);
+            this._monitorId = this._monitor.connect('changed', () => this._scheduleHotRefresh());
+        } catch (e) {
+            this._monitor = null;
+        }
+    }
+
+    _startSlowPoll() {
+        if (this._timeoutId !== null)
+            GLib.source_remove(this._timeoutId);
+        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, POLL_SEC, () => {
+            this._refresh();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _scheduleHotRefresh() {
+        // debounce: enumeration fires a burst of events; one refresh after 1 s
+        if (this._debounceId !== null)
+            return;
+        this._debounceId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            this._debounceId = null;
+            this._refresh();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
     }
 
     _refresh() {
@@ -106,17 +133,30 @@ class BatteryIndicator extends PanelMenu.Button {
             }
             if (pct > LOW_THRESHOLD)
                 this._lowNotified[pid] = false;
-            return d.charging ? `${pct}% ⚡` : `${pct}%`;
+            // colored bolt via markup: single-tone gold, no emoji rendering variance
+            return d.charging
+                ? `${pct}% <span rise="0" size="0.85em" foreground="#f5c211">⚡</span>`
+                : `${pct}%`;
         });
         this._label.text = `🖱 ${parts.join(' ')}`;
         return true;
     }
 
     vfunc_destroy() {
-        // stop the poll timer before the actor is torn down
+        // stop the poll timer and the hotplug monitor before teardown
         if (this._timeoutId !== null) {
             GLib.source_remove(this._timeoutId);
             this._timeoutId = null;
+        }
+        if (this._debounceId !== null) {
+            GLib.source_remove(this._debounceId);
+            this._debounceId = null;
+        }
+        if (this._monitor) {
+            if (this._monitorId)
+                this._monitor.disconnect(this._monitorId);
+            this._monitor.cancel();
+            this._monitor = null;
         }
         super.vfunc_destroy();
     }
