@@ -95,20 +95,18 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings, iconPath) {
+    _init(settings) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Primary icon: bundled icons/icon-mouse.svg (owner's vectorized
-        // silhouette, potrace). -st-icon-style: symbolic makes St paint it
-        // with the panel foreground color via its alpha/luminance mask —
-        // the PNG fallback and 🖱 emoji cover a missing file.
+        // Icon: battery-razer-mouse-symbolic, the owner's vector mouse installed
+        // into the user hicolor icon theme (see icons/install.sh). Loaded by
+        // name so the icon theme machinery applies symbolic recoloring —
+        // the silhouette follows the panel text color. Fallback: 🖱 emoji.
         this._icon = null;
-        if (Gio.File.new_for_path(`${iconPath}/icon-mouse.svg`).query_exists(null)) {
+        if (this._iconNameAvailable('battery-razer-mouse-symbolic')) {
             this._icon = new St.Icon({
-                gicon: Gio.FileIcon.new(
-                    Gio.File.new_for_path(`${iconPath}/icon-mouse.svg`)),
+                icon_name: 'battery-razer-mouse-symbolic',
                 style_class: 'system-status-icon',
-                style: '-st-icon-style: symbolic;',
             });
         }
         this._label = new St.Label({
@@ -150,6 +148,17 @@ class BatteryIndicator extends PanelMenu.Button {
                 () => { debug('hotplug event'); this._scheduleHotRefresh(); });
         } catch (e) {
             this._monitor = null; // sysfs watches unsupported — poll only
+        }
+    }
+
+    _iconNameAvailable(name) {
+        // Look the name up in the loaded icon themes; falls back to false
+        // when the icon was not installed (e.g. fresh git clone).
+        try {
+            const theme = St.IconTheme.get_default();
+            return theme.has_icon(name);
+        } catch (e) {
+            return false;
         }
     }
 
@@ -291,8 +300,7 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(
-            this.getSettings(), `${this.path}/icons`);
+        this._indicator = new BatteryIndicator(this.getSettings());
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
