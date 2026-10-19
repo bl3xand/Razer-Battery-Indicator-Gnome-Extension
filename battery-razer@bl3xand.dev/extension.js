@@ -99,7 +99,7 @@ class BatteryIndicator extends PanelMenu.Button {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
         this._label = new St.Label({
-            text: '🖱 …',
+            text: '🖱︎ …',
             style: 'font-size: 0.85em;',
         });
         // Small font (0.85em) centers ~1.5px high inside the pill (the
@@ -204,12 +204,12 @@ class BatteryIndicator extends PanelMenu.Button {
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
         if (known.length === 0 && pids.length === 0) {
-            this._label.text = '🖱 —';
+            this._label.text = '🖱︎ —';
             return false;
         }
         if (known.length === 0) {
             // Driver bound but nothing has reported yet (mouse enumerating).
-            this._label.text = '🖱 …';
+            this._label.text = '🖱︎ …';
             return false;
         }
         const parts = known.map(pid => {
@@ -217,7 +217,7 @@ class BatteryIndicator extends PanelMenu.Button {
             this._trackLowBattery(pid, d);
             return formatDevice(d);
         });
-        this._label.text = `🖱 ${parts.join(' ')}`;
+        this._label.text = `🖱︎ ${parts.join(' ')}`;
         return live.length > 0;
     }
 
