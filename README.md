@@ -3,17 +3,22 @@
 Shows the battery level of Razer wireless devices (via the OpenRazer kernel
 driver) directly in the GNOME top panel.
 
+![screenshot](screenshot.png)
 
 ## Features
 
-- 🖱 percentage label in the top panel, always one entry per device
+- Mouse icon + percentage label in the top panel, always one entry per device
+- The icon is drawn from an embedded vector path and recolors itself for
+  light/dark panel themes — no image assets
 - Deduplication: a mouse exposes several HID battery interfaces — the
   extension groups them by device and takes the best nonzero reading
 - Dead connections (e.g. the dongle while the mouse is charging over cable)
   are hidden automatically
-- ⚡ charging indicator
-- Low-battery notification at 20%
-- 30 s polling, zero background processes (runs inside GNOME Shell)
+- ⚡ charging indicator (monochrome, follows text color)
+- Sleep-aware: while the mouse sleeps (sysfs reads 0) the last known charge
+  is held instead of dropping the indicator
+- Low-battery notification at 20% (configurable)
+- 5 s polling, zero background processes (runs inside GNOME Shell)
 
 ## Install
 
@@ -29,7 +34,7 @@ On Wayland, log out and back in first so GNOME Shell discovers the extension.
 
 - OpenRazer kernel driver (`openrazer-driver-dkms`) — the extension reads
   `/sys/bus/hid/drivers/razermouse/*/charge_level` (raw 0–255, 255 = 100%)
-- GNOME Shell 50
+- GNOME Shell 50 or 51
 
 ## Uninstall
 
