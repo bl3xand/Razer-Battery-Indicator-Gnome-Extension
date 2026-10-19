@@ -1,0 +1,7 @@
+{
+  "uuid": "battery-razer@bl3xand.dev",
+  "name": "Razer Battery",
+  "description": "Razer wireless device battery in the top panel, deduped by device",
+  "shell-version": ["50"],
+  "version": 1
+}
