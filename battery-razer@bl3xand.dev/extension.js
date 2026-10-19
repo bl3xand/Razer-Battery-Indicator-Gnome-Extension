@@ -3,6 +3,7 @@ import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
+import GdkPixbuf from 'gi://GdkPixbuf';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -18,6 +19,8 @@ const DEBUG = false;
 // 5 s reading two tiny files costs nothing, and a single constant means
 // no timer-state machine to get wrong.
 const POLL_SEC = 5;
+// Panel icon size, matches the system-status-icon class.
+const ICON_PX = 16;
 
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color emoji.
@@ -95,30 +98,41 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings) {
+    _init(settings, iconsDir) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Icon: battery-razer-mouse-symbolic, the owner's vector mouse installed
-        // into the user hicolor icon theme (see icons/install.sh). Loaded by
-        // name so the icon theme machinery applies symbolic recoloring —
-        // the silhouette follows the panel text color. Fallback: 🖱 emoji.
-        this._icon = null;
-        if (this._iconNameAvailable('battery-razer-mouse-symbolic')) {
-            this._icon = new St.Icon({
-                icon_name: 'battery-razer-mouse-symbolic',
-                style_class: 'system-status-icon',
-            });
+        // Icon: the bundled vector mouse (icons/icon-mouse-symbolic.svg),
+        // rasterized once via GdkPixbuf and drawn through St.DrawingArea.
+        // Cairo paints it with the panel's foreground color (read from the
+        // theme node at repaint time), so the silhouette follows the theme —
+        // self-contained, no icon-theme installation needed. The pixbuf's
+        // alpha channel is the mask. Fallback: 🖱 emoji when SVG missing.
+        this._iconPixbuf = null;
+        const svg = `${iconsDir}/icon-mouse-symbolic.svg`;
+        if (Gio.File.new_for_path(svg).query_exists(null)) {
+            try {
+                this._iconPixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                    svg, ICON_PX, ICON_PX);
+            } catch (e) {
+                this._iconPixbuf = null;
+            }
         }
         this._label = new St.Label({
-            text: this._icon ? '…' : '🖱 …',
+            text: this._iconPixbuf ? '…' : '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
-            style: 'font-size: 0.85em;',
+            y_expand: true,
+            style: 'font-size: 0.85em; margin: 0 2px;',
         });
         const box = new St.BoxLayout({vertical: false});
-        if (this._icon)
-            box.add_child(this._icon);
+        if (this._iconPixbuf) {
+            const icon = new St.DrawingArea();
+            icon.set_size_request(ICON_PX, ICON_PX);
+            icon.connect('repaint', (area) => this._paintIcon(area));
+            box.add_child(icon);
+        }
         box.add_child(this._label);
         // BoxLayout fills the full button height; children center inside.
+        box.y_expand = true;
         this.add_child(box);
         this._lowNotified = {};
         this._lastKnown = {};
@@ -151,15 +165,19 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    _iconNameAvailable(name) {
-        // Look the name up in the loaded icon themes; falls back to false
-        // when the icon was not installed (e.g. fresh git clone).
-        try {
-            const theme = St.IconTheme.get_default();
-            return theme.has_icon(name);
-        } catch (e) {
-            return false;
-        }
+    /** Paint the bundled mouse pixbuf with the panel foreground color. */
+    _paintIcon(area) {
+        const cr = area.get_context();
+        const [ok, color] = area.get_theme_node().lookup_color('foreground', false);
+        const fg = ok ? color
+            : new Clutter.Color({red: 255, green: 255, blue: 255, alpha: 255});
+        // The pixbuf becomes the mask; the solid theme color the paint.
+        GdkPixbuf.cairo_set_source_pixbuf(cr, this._iconPixbuf, 0, 0);
+        const pattern = cr.getSource();
+        cr.setSourceRGBA(
+            fg.red / 255, fg.green / 255, fg.blue / 255, fg.alpha / 255);
+        cr.mask(pattern);
+        cr.$dispose();
     }
 
     _scheduleHotRefresh() {
@@ -221,7 +239,7 @@ class BatteryIndicator extends PanelMenu.Button {
             `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
-        const pfx = this._icon ? '' : '🖱 ';
+        const pfx = this._iconPixbuf ? '' : '🖱 ';
         if (known.length === 0 && pids.length === 0) {
             this._label.text = `${pfx}—`;
             return false;
@@ -300,7 +318,8 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(this.getSettings());
+        this._indicator = new BatteryIndicator(
+            this.getSettings(), `${this.path}/icons`);
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 
