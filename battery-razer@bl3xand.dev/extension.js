@@ -12,6 +12,10 @@ const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const STARTUP_RETRY_SEC = 2;
 const HOTPLUG_DEBOUNCE_SEC = 1;
 
+// U+FE0E forces text presentation of the emoji: rendered as a monochrome
+// glyph that inherits the label's foreground color instead of full-color emoji.
+const BOLT = '⚡︎';
+
 const DECODER = new TextDecoder();
 
 /**
@@ -21,8 +25,8 @@ const DECODER = new TextDecoder();
  *
  * A device exposes several interfaces reporting the same battery: keep the
  * best nonzero reading, since idle interfaces return raw 0 = no data.
- * Devices whose every interface reports 0 are not talking (e.g. the dongle
- * while the mouse charges over cable) and are dropped entirely.
+ * A device whose every interface reads 0 is asleep (or idle) — it is still
+ * returned so the caller can hold its last known charge.
  *
  * @returns {Record<string, {level: number, charging: boolean}>} raw level 0-255
  */
@@ -56,11 +60,7 @@ function readBatteries() {
     } finally {
         enumerator.close(null);
     }
-    const live = {};
-    for (const pid in devices)
-        if (devices[pid].level > 0)
-            live[pid] = devices[pid];
-    return live;
+    return devices;
 }
 
 /** Read a whole sysfs file and parse it as an integer, null on any failure. */
@@ -76,7 +76,7 @@ function readInt(path) {
 /** One panel entry per live device: "100%" or "85% ⚡". */
 function formatDevice(device) {
     const pct = Math.round(device.level * 100 / 255);
-    const bolt = device.charging ? ' ⚡' : '';
+    const bolt = device.charging ? ` ${BOLT}` : '';
     return `${pct}%${bolt}`;
 }
 
@@ -88,10 +88,12 @@ class BatteryIndicator extends PanelMenu.Button {
         this._label = new St.Label({
             text: '🖱 …',
             y_align: Clutter.ActorAlign.CENTER,
-            style: 'font-size: 0.85em;',
+            y_expand: true,
+            style: 'font-size: 0.85em; margin: 0 2px;',
         });
         this.add_child(this._label);
         this._lowNotified = {};
+        this._lastKnown = {};
         this._timeoutId = null;
         this._debounceId = null;
         this._startupRetryId = null;
@@ -145,7 +147,14 @@ class BatteryIndicator extends PanelMenu.Button {
         this._removeTimeout('_timeoutId');
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, this._settings.get_int('poll-seconds'), () => {
-                this._refresh();
+                if (!this._refresh()) {
+                    // All devices asleep — poll fast until one wakes up,
+                    // otherwise the first reading after wake is delayed by
+                    // a full slow interval.
+                    this._removeTimeout('_timeoutId');
+                    this._startStartupRetry();
+                    return GLib.SOURCE_REMOVE;
+                }
                 return GLib.SOURCE_CONTINUE;
             });
     }
@@ -177,30 +186,54 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    /** @returns {boolean} whether any live device was found */
+    /** @returns {boolean} whether any device reported a fresh reading */
     _refresh() {
         if (this._destroyed)
             return false;
         const devices = readBatteries();
         const pids = Object.keys(devices);
-        this._rebuildMenu(devices);
-        if (pids.length === 0) {
+        // Hold the last known charge while a device sleeps (sysfs reads 0).
+        for (const pid of pids) {
+            if (devices[pid].level === 0 && this._lastKnown[pid]) {
+                devices[pid].level = this._lastKnown[pid].level;
+                devices[pid].charging = false; // asleep means not charging
+                devices[pid]._held = true;
+            } else if (devices[pid].level > 0) {
+                this._lastKnown[pid] = {level: devices[pid].level};
+            }
+        }
+        // Drop devices that vanished entirely (unplugged), not just slept.
+        for (const pid in this._lastKnown)
+            if (!(pid in devices))
+                delete this._lastKnown[pid];
+        // Live = reported a fresh nonzero reading this cycle.
+        const live = pids.filter(pid => devices[pid].level > 0 && !devices[pid]._held);
+        for (const pid of pids)
+            delete devices[pid]._held;
+        const known = pids.filter(pid => devices[pid].level > 0);
+        this._rebuildMenu(devices, known);
+        if (known.length === 0 && pids.length === 0) {
             this._label.text = '🖱 —';
             return false;
         }
-        const parts = pids.map(pid => {
+        if (known.length === 0) {
+            // Driver bound but nothing has reported yet (mouse enumerating).
+            this._label.text = '🖱 …';
+            return false;
+        }
+        const parts = known.map(pid => {
             const d = devices[pid];
             this._trackLowBattery(pid, d);
             return formatDevice(d);
         });
         this._label.text = `🖱 ${parts.join(' ')}`;
-        return true;
+        return live.length > 0;
     }
 
     /** Rebuild the dropdown: one line per device + a quit item. */
-    _rebuildMenu(devices) {
+    _rebuildMenu(devices, known) {
         this.menu.removeAll();
-        const pids = Object.keys(devices);
+        const pids = known.length > 0 ? known : Object.keys(devices);
         if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('Устройства не найдены'), {reactive: false}));
@@ -210,7 +243,7 @@ class BatteryIndicator extends PanelMenu.Button {
                 const pct = Math.round(d.level * 100 / 255);
                 const item = new PopupMenu.PopupMenuItem(
                     `${this._deviceName(pid)} — ${pct}%` +
-                    (d.charging ? ' ⚡' : ''), {reactive: false});
+                    (d.charging ? ` ${BOLT}` : ''), {reactive: false});
                 this.menu.addMenuItem(item);
             }
         }
