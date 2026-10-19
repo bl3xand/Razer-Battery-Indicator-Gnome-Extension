@@ -5,7 +5,8 @@ import GObject from 'gi://GObject';
 import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
-import {Extension} from 'resource:///org/gnome/Shell/Extensions/js/misc/extension.js';
+import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {Extension, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/misc/extension.js';
 
 const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 const STARTUP_RETRY_SEC = 2;
@@ -183,6 +184,7 @@ class BatteryIndicator extends PanelMenu.Button {
             return false;
         const devices = readBatteries();
         const pids = Object.keys(devices);
+        this._rebuildMenu(devices);
         if (pids.length === 0) {
             this._label.text = '🖱 —';
             return false;
@@ -194,6 +196,36 @@ class BatteryIndicator extends PanelMenu.Button {
         });
         this._label.text = `🖱 ${parts.join(' ')}`;
         return true;
+    }
+
+    /** Rebuild the dropdown: one line per device + a quit item. */
+    _rebuildMenu(devices) {
+        this.menu.removeAll();
+        const pids = Object.keys(devices);
+        if (pids.length === 0) {
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                _('Устройства не найдены'), {reactive: false}));
+        } else {
+            for (const pid of pids) {
+                const d = devices[pid];
+                const pct = Math.round(d.level * 100 / 255);
+                const item = new PopupMenu.PopupMenuItem(
+                    `${this._deviceName(pid)} — ${pct}%` +
+                    (d.charging ? ' ⚡' : ''), {reactive: false});
+                this.menu.addMenuItem(item);
+            }
+        }
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addAction(_('Выход'), () => this.destroy());
+    }
+
+    /** Map a sysfs pid to a readable device name. */
+    _deviceName(pid) {
+        const known = {
+            '0003:1532:00D6': 'Basilisk V3 Pro 35K (провод)',
+            '0003:1532:00D7': 'Basilisk V3 Pro 35K (dongle)',
+        };
+        return known[pid] ?? 'Razer ' + pid.split(':').pop();
     }
 
     _trackLowBattery(pid, device) {
