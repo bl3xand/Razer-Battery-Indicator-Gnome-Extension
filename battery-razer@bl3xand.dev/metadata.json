@@ -6,5 +6,6 @@
     "50"
   ],
   "version": 1,
-  "version-name": "1.0"
+  "version-name": "1.0",
+  "settings-schema": "org.gnome.shell.extensions.battery-razer"
 }
