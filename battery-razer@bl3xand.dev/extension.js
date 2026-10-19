@@ -227,7 +227,7 @@ class BatteryIndicator extends PanelMenu.Button {
         const pids = known.length > 0 ? known : Object.keys(devices);
         if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                _('Устройства не найдены'), {reactive: false}));
+                _('No devices found'), {reactive: false}));
         } else {
             for (const pid of pids) {
                 const d = devices[pid];
@@ -239,7 +239,7 @@ class BatteryIndicator extends PanelMenu.Button {
             }
         }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.menu.addAction(_('Выход'), () => this.destroy());
+        this.menu.addAction(_('Quit'), () => this.destroy());
     }
 
     /** Map a sysfs pid to a readable device name. */
@@ -257,8 +257,8 @@ class BatteryIndicator extends PanelMenu.Button {
         if (pct <= threshold && !device.charging) {
             if (!this._lowNotified[pid]) {
                 this._lowNotified[pid] = true;
-                Main.notify('Razer: батарея садится',
-                    `${pct}% — пора на зарядку`);
+                Main.notify('Razer: battery low',
+                    `${pct}% — time to charge`);
             }
         } else {
             this._lowNotified[pid] = false;

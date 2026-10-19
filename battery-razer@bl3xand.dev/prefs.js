@@ -15,14 +15,14 @@ export default class RazerBatteryPreferences extends ExtensionPreferences {
             icon_name: 'battery-symbolic',
         });
         const group = new Adw.PreferencesGroup({
-            title: _('Поведение'),
-            description: _('Настройки индикатора батареи Razer'),
+            title: _('Behavior'),
+            description: _('Razer battery indicator settings'),
         });
         page.add(group);
 
         const threshold = new Adw.SpinRow({
-            title: _('Порог уведомления, %'),
-            subtitle: _('Уведомлять при разряде ниже этого уровня'),
+            title: _('Notification threshold, %'),
+            subtitle: _('Notify when the charge drops below this level'),
             adjustment: new Gtk.Adjustment({
                 value: 20, lower: 5, upper: 50,
                 step_increment: 5, page_increment: 10,
