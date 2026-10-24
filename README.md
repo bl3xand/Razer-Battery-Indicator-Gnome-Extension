@@ -65,8 +65,8 @@ What it does per distro:
 | Debian | `openrazer-driver-dkms` | `plugdev` |
 | openSUSE | `openrazer-driver-dkms` from `hardware:razer` | `plugdev` |
 
-**Reboot after install** — the kernel module and the group permission only
-take effect after a reboot. Secure Boot may block the unsigned module; see
+**Reboot after install** — the kernel module loads at boot, so a reboot is
+required. Secure Boot may block the unsigned module; see
 the [OpenRazer troubleshooting guide](https://github.com/openrazer/openrazer/wiki/Troubleshooting).
 
 Other distros: see the [official OpenRazer instructions](https://openrazer.github.io/).

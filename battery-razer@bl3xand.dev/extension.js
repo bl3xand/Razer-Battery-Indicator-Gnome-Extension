@@ -288,18 +288,18 @@ class BatteryIndicator extends PanelMenu.Button {
         cr.$dispose();
     }
 
-    /** Log out of the GNOME session (systemd-logind, no confirmation). */
-    _logout() {
+    /** Reboot the machine (systemd-logind, no confirmation). */
+    _reboot() {
         try {
-            Gio.Subprocess.new(['gnome-session-quit', '--logout', '--no-prompt'],
+            Gio.Subprocess.new(['gnome-session-quit', '--reboot', '--no-prompt'],
                 Gio.SubprocessFlags.NONE);
         } catch (e) {
-            // Fallback: logind D-Bus call.
             Gio.DBus.system.call(
                 'org.freedesktop.login1',
-                '/org/freedesktop/login1/session/auto',
-                'org.freedesktop.login1.Session',
-                'Terminate', null, null, Gio.DBusCallFlags.NONE, -1, null, null);
+                '/org/freedesktop/login1',
+                'org.freedesktop.login1.Manager',
+                'Reboot', new GLib.Variant('(b)', [false]), null,
+                Gio.DBusCallFlags.NONE, -1, null, null);
         }
     }
 
@@ -440,8 +440,8 @@ class BatteryIndicator extends PanelMenu.Button {
             if (this._installRequested) {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('Driver installed'), {reactive: false}));
-                this.menu.addAction(_('Log out and back in'), () =>
-                    this._logout());
+                this.menu.addAction(_('Reboot'), () =>
+                    this._reboot());
             } else {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('OpenRazer driver not installed'), {reactive: false}));
