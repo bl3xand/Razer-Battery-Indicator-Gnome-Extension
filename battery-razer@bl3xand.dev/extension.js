@@ -61,6 +61,7 @@ class BatteryIndicator extends PanelMenu.Button {
         this._driverWatch = null;
         this._driverWatchId = null;
         this._slowWakeId = null;
+        this._menuOpenId = null;
         this._destroyed = false;
         this._menuKey = null;
 
@@ -78,7 +79,7 @@ class BatteryIndicator extends PanelMenu.Button {
         // While waiting for the user to reboot after an install, the menu
         // content depends on the installer's progress — re-evaluate it each
         // time the menu is opened instead of polling in the background.
-        this.menu.connect('open-state-changed', (menu, open) => {
+        this._menuOpenId = this.menu.connect('open-state-changed', (menu, open) => {
             if (open && this._driverMissing && this._installRequested)
                 this._rebuildMenu({}, []);
         });
@@ -321,6 +322,10 @@ class BatteryIndicator extends PanelMenu.Button {
         this._removeTimeout('_timeoutId');
         this._removeTimeout('_debounceId');
         this._removeTimeout('_slowWakeId');
+        if (this._menuOpenId) {
+            this.menu.disconnect(this._menuOpenId);
+            this._menuOpenId = null;
+        }
         if (this._driverWatch) {
             if (this._driverWatchId)
                 this._driverWatch.disconnect(this._driverWatchId);
