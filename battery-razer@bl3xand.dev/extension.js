@@ -7,8 +7,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, DEBUG, SCAN_DIR, BOLT}
-    from './constants.js';
+import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, DEBUG, SCAN_DIR, BOLT,
+    DRIVER_SETUP_URL} from './constants.js';
 import {paintMouse, panelTextIsDark} from './mouseIcon.js';
 
 const DECODER = new TextDecoder();
@@ -199,6 +199,7 @@ class BatteryIndicator extends PanelMenu.Button {
         this.add_child(box);
         this._lowNotified = {};
         this._lastKnown = {};
+        this._driverMissing = false;
         this._reading = false;
         this._timeoutId = null;
         this._debounceId = null;
@@ -305,8 +306,14 @@ class BatteryIndicator extends PanelMenu.Button {
             `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
-        if (known.length === 0 && pids.length === 0) {
-            this._label.text = '—';
+        if (pids.length === 0) {
+            // No Razer interfaces at all: either no device plugged in, or
+            // the OpenRazer kernel driver is missing. Distinguish: the
+            // driver directory itself only exists when the module is loaded.
+            const driverLoaded =
+                Gio.File.new_for_path(SCAN_DIR).query_exists(null);
+            this._label.text = driverLoaded ? '—' : '!';
+            this._driverMissing = !driverLoaded;
             return;
         }
         if (known.length === 0) {
@@ -324,7 +331,13 @@ class BatteryIndicator extends PanelMenu.Button {
     _rebuildMenu(devices, known) {
         this.menu.removeAll();
         const pids = known.length > 0 ? known : Object.keys(devices);
-        if (pids.length === 0) {
+        if (this._driverMissing) {
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                _('OpenRazer driver not installed'), {reactive: false}));
+            this.menu.addAction(_('How to install'), () =>
+                Gio.AppInfo.launch_default_for_uri(
+                    DRIVER_SETUP_URL, null));
+        } else if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('No devices found'), {reactive: false}));
         } else {
