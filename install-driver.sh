@@ -79,3 +79,5 @@ echo -e "${YELLOW}Done. To finish setup, log out and back in, or reboot your PC.
 echo ""
 say "If Secure Boot blocks the module, see:"
 say "https://github.com/openrazer/openrazer/wiki/Troubleshooting"
+echo ""
+read -rp "Press Enter to close this window..." _

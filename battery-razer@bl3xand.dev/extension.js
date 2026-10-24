@@ -200,6 +200,7 @@ class BatteryIndicator extends PanelMenu.Button {
         this._lowNotified = {};
         this._lastKnown = {};
         this._driverMissing = false;
+        this._installRequested = false;
         this._reading = false;
         this._timeoutId = null;
         this._debounceId = null;
@@ -294,8 +295,7 @@ class BatteryIndicator extends PanelMenu.Button {
      * runs inside gnome-shell.
      */
     _launchInstaller() {
-        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash; `
-            + `echo; echo 'Press Enter to close this window...'; read`;
+        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
         let terminal = null;
         try {
             terminal = new Gio.Settings({schema_id:
@@ -422,10 +422,20 @@ class BatteryIndicator extends PanelMenu.Button {
         this.menu.removeAll();
         const pids = known.length > 0 ? known : Object.keys(devices);
         if (this._driverMissing) {
-            this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                _('OpenRazer driver not installed'), {reactive: false}));
-            this.menu.addAction(_('Install driver'), () =>
-                this._launchInstaller());
+            if (this._installRequested) {
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                    _('Driver installed'), {reactive: false}));
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                    _('Log out and back in to finish setup'), {reactive: false}));
+            } else {
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                    _('OpenRazer driver not installed'), {reactive: false}));
+                this.menu.addAction(_('Install driver'), () => {
+                    this._installRequested = true;
+                    this._launchInstaller();
+                    this._rebuildMenu({}, []);
+                });
+            }
         } else if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('No devices found'), {reactive: false}));
