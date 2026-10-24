@@ -294,7 +294,8 @@ class BatteryIndicator extends PanelMenu.Button {
      * runs inside gnome-shell.
      */
     _launchInstaller() {
-        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
+        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash; `
+            + `echo; echo 'Press Enter to close this window...'; read`;
         let terminal = null;
         try {
             terminal = new Gio.Settings({schema_id:
