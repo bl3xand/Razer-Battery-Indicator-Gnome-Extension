@@ -8,7 +8,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
 import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, DEBUG, SCAN_DIR, BOLT,
-    DRIVER_SETUP_URL} from './constants.js';
+    DRIVER_SETUP_URL, DRIVER_SETUP_RAW} from './constants.js';
 import {paintMouse, panelTextIsDark} from './mouseIcon.js';
 
 const DECODER = new TextDecoder();
@@ -425,8 +425,6 @@ class BatteryIndicator extends PanelMenu.Button {
                 _('OpenRazer driver not installed'), {reactive: false}));
             this.menu.addAction(_('Install driver'), () =>
                 this._launchInstaller());
-            this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                _('Reboot required after install'), {reactive: false}));
         } else if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('No devices found'), {reactive: false}));

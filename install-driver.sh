@@ -73,8 +73,10 @@ opensuse)
     ;;
 esac
 
-say ""
-say "Done. IMPORTANT: reboot now — the kernel module and the group"
-say "permission only take effect after a reboot."
+YELLOW="\033[1;33m"; RESET="\033[0m"
+echo ""
+echo -e "${YELLOW}Done. IMPORTANT: reboot now — the kernel module and the group${RESET}"
+echo -e "${YELLOW}permission only take effect after a reboot.${RESET}"
+echo ""
 say "If Secure Boot blocks the module, see:"
 say "https://github.com/openrazer/openrazer/wiki/Troubleshooting"
