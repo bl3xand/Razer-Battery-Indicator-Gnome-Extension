@@ -22,6 +22,11 @@ export const DEBUG = false;
 // Where the openrazer kernel driver exposes battery interfaces.
 export const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 
+// Shown in the menu when the kernel driver is missing: repo page with the
+// one-command installer script (install-driver.sh).
+export const DRIVER_SETUP_URL =
+    'https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension#openrazer-driver';
+
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color
 // emoji. Used for the charging bolt.
