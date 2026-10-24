@@ -17,10 +17,10 @@ driver) directly in the GNOME top panel.
 - ⚡ charging indicator (monochrome, follows text color)
 - Sleep-aware: while the mouse sleeps (sysfs reads 0) the last known charge
   is held instead of dropping the indicator
-- Low-battery notification at 20% (configurable)
-- 5 s polling, zero background processes (runs inside GNOME Shell)
+- Low-battery notification at a configurable threshold
+- Lightweight polling, zero background processes (runs inside GNOME Shell)
 - Driver-missing detection: if the OpenRazer kernel driver is absent, the
-  indicator shows `!` and the menu links to the setup instructions below
+  indicator shows `!` and the menu offers a guided install
 
 ## Install
 
@@ -36,7 +36,7 @@ Or grab the package from **extensions.gnome.org** (search "Razer Battery").
 
 ## Requirements
 
-- GNOME Shell 50 or 51
+- A recent GNOME Shell
 
 The OpenRazer kernel driver is the only dependency. It cannot be bundled
 inside the extension (it is an out-of-tree kernel module), but setup is one
@@ -45,8 +45,7 @@ instead of silently failing.
 
 ## <a name="openrazer-driver"></a>OpenRazer driver
 
-The extension reads `/sys/bus/hid/drivers/razermouse/*/charge_level`
-(raw 0–255, 255 = 100%) exposed by the driver.
+The extension reads the battery level exposed by the driver in sysfs.
 
 **One-command install** — detects your distro, installs the driver and
 adds your user to the right group:
@@ -59,7 +58,7 @@ What it does per distro:
 
 | Distro | Package | Group |
 |---|---|---|
-| Arch (and derivatives) | `openrazer-driver-dkms` + `linux-headers` | `openrazer` |
+| Arch (and derivatives) | `openrazer-driver-dkms` + matching kernel headers | `openrazer` |
 | Fedora | `openrazer-meta` from the `hardware:razer` repo | `plugdev` |
 | Ubuntu | `openrazer-driver-dkms` (universe) | `plugdev` |
 | Debian | `openrazer-driver-dkms` | `plugdev` |
@@ -73,7 +72,7 @@ Other distros: see the [official OpenRazer instructions](https://openrazer.githu
 
 ## Tested on
 
-- Arch Linux (GNOME Shell 50.5, OpenRazer 3.12.4, Razer Basilisk V3 Pro 35K)
+- Arch Linux (Razer Basilisk V3 Pro 35K)
 
 Found a problem on your system? **Please open an
 [issue](https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/issues)** —
