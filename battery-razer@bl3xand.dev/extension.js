@@ -7,161 +7,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, DEBUG, SCAN_DIR, BOLT,
-    DRIVER_SETUP_URL, DRIVER_SETUP_RAW} from './constants.js';
+import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, SCAN_DIR, BOLT}
+    from './constants.js';
 import {paintMouse, panelTextIsDark} from './mouseIcon.js';
-
-const DECODER = new TextDecoder();
-
-/** Debug log, greppable in the journal as "battery-razer". */
-function debug(...args) {
-    if (DEBUG)
-        console.log(`battery-razer: ${args.join(' ')}`);
-}
-
-/**
- * Collect the battery state of every Razer device the kernel driver
- * exposes (sysfs ids look like 0003:1532:00D7.0004 — the part before the
- * last dot identifies the physical device). Fully async: every file read
- * goes through load_contents_async, so the razermouse driver's ~1 s HID
- * timeout on a sleeping mouse runs in a GIO worker thread and never
- * blocks the gnome-shell main loop.
- *
- * Per device: charge_level of each interface, best nonzero reading wins
- * (idle interfaces return raw 0 = no data). charge_status is read only
- * for devices with a nonzero level — a sleeping device reads 0 and its
- * charging state is meaningless, so skipping it halves the kernel
- * traffic (and the journal timeout spam) during sleep.
- *
- * @param {(devices: Record<string, {level: number, charging: boolean}>) => void} callback
- *   invoked once, in the main loop, with raw levels (0-255)
- */
-function readBatteriesAsync(callback) {
-    listInterfaces(ids => {
-        const byPid = {};
-        for (const id of ids) {
-            const pid = id.substring(0, id.lastIndexOf('.'));
-            (byPid[pid] ??= []).push(id);
-        }
-        const pids = Object.keys(byPid);
-        const devices = {};
-        let pending = pids.length;
-        if (pending === 0) {
-            callback(devices);
-            return;
-        }
-        // Phase 1: charge_level per device (best nonzero across interfaces).
-        for (const pid of pids) {
-            readBest(byPid[pid], level => {
-                devices[pid] = {level, charging: false};
-                if (--pending > 0)
-                    return;
-                // Phase 2: charge_status only for live devices.
-                const live = pids.filter(p => devices[p].level > 0);
-                let waiting = live.length;
-                if (waiting === 0) {
-                    callback(devices);
-                    return;
-                }
-                for (const pid2 of live) {
-                    readCharging(byPid[pid2], charging => {
-                        devices[pid2].charging = charging;
-                        if (--waiting === 0)
-                            callback(devices);
-                    });
-                }
-            });
-        }
-    });
-}
-
-/** Enumerate 0003:* interface ids in the driver directory, async. */
-function listInterfaces(callback) {
-    const dir = Gio.File.new_for_path(SCAN_DIR);
-    dir.enumerate_children_async('standard::*',
-        Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, null, (src, res) => {
-            let enumerator;
-            try {
-                enumerator = src.enumerate_children_finish(res);
-            } catch (e) {
-                callback([]); // driver not loaded — no Razer devices
-                return;
-            }
-            const ids = [];
-            const next = (src2, res2) => {
-                let infos;
-                try {
-                    infos = src2.next_files_finish(res2);
-                } catch (e) {
-                    infos = [];
-                }
-                if (infos.length === 0) {
-                    enumerator.close(null);
-                    callback(ids);
-                    return;
-                }
-                for (const info of infos) {
-                    const name = info.get_name();
-                    if (name.startsWith('0003:'))
-                        ids.push(name);
-                }
-                enumerator.next_files_async(16, GLib.PRIORITY_DEFAULT, null, next);
-            };
-            enumerator.next_files_async(16, GLib.PRIORITY_DEFAULT, null, next);
-        });
-}
-
-/**
- * Read charge_level from every interface of a device, keep the best
- * nonzero reading. Async, non-blocking.
- */
-function readBest(interfaceIds, callback) {
-    let best = 0;
-    let pending = interfaceIds.length;
-    for (const id of interfaceIds) {
-        readIntAsync(`${SCAN_DIR}/${id}/charge_level`, value => {
-            if (value !== null && value > best)
-                best = value;
-            if (--pending === 0)
-                callback(best);
-        });
-    }
-}
-
-/**
- * Whether a live device is charging: any interface reporting
- * charge_status 1 counts. Single-shot callback.
- */
-function readCharging(interfaceIds, callback) {
-    let pending = interfaceIds.length;
-    let fired = false;
-    const done = value => {
-        if (!fired) {
-            fired = true;
-            callback(value === 1);
-        }
-    };
-    for (const id of interfaceIds) {
-        readIntAsync(`${SCAN_DIR}/${id}/charge_status`, value => {
-            if (value === 1)
-                done(1);
-            else if (--pending === 0)
-                done(0);
-        });
-    }
-}
-
-/** Async read a whole sysfs file, parse as integer, null on any failure. */
-function readIntAsync(path, callback) {
-    Gio.File.new_for_path(path).load_contents_async(null, (src, res) => {
-        try {
-            const [, bytes] = src.load_contents_finish(res);
-            callback(parseInt(DECODER.decode(bytes), 10));
-        } catch (e) {
-            callback(null);
-        }
-    });
-}
+import {readBatteriesAsync} from './battery.js';
+import {launchInstaller, reboot} from './actions.js';
+import {debug} from './log.js';
 
 /** One panel entry per live device: "100%" or "85% ⚡". */
 function formatDevice(device) {
@@ -205,15 +56,17 @@ class BatteryIndicator extends PanelMenu.Button {
         this._timeoutId = null;
         this._debounceId = null;
         this._monitorId = null;
+        this._monitor = null;
+        this._driverWatch = null;
+        this._driverWatchId = null;
+        this._slowWakeId = null;
         this._destroyed = false;
+        this._menuKey = '';
 
         // Startup: check the kernel driver ONCE. If missing, go dormant
         // ('!' state, zero polling) and watch for the driver dir to appear.
         // If present, start the flat poll and watch for hotplug.
-        this._monitor = null;
-        this._driverWatchId = null;
         if (Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
-            this._driverMissing = false;
             this._startPolling();
         } else {
             this._driverMissing = true;
@@ -249,22 +102,22 @@ class BatteryIndicator extends PanelMenu.Button {
     /** Dormant mode: wake up as soon as the driver directory appears. */
     _watchForDriver() {
         try {
-            const drivers = Gio.File.new_for_path('/sys/bus/hid/drivers');
-            const watch = drivers.monitor_directory(
-                Gio.FileMonitorFlags.NONE, null);
-            this._driverWatchId = watch.connect('changed', (mon, file, other, evtype) => {
-                if (file && file.get_basename() === 'razermouse' &&
-                    Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
-                    debug('driver appeared, waking up');
-                    this._driverMissing = false;
-                    if (this._driverWatchId) {
-                        watch.disconnect(this._driverWatchId);
-                        this._driverWatchId = null;
+            const watch = Gio.File.new_for_path('/sys/bus/hid/drivers')
+                .monitor_directory(Gio.FileMonitorFlags.NONE, null);
+            this._driverWatchId = watch.connect('changed',
+                (mon, file, other, evtype) => {
+                    if (file && file.get_basename() === 'razermouse' &&
+                        Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
+                        debug('driver appeared, waking up');
+                        this._driverMissing = false;
+                        if (this._driverWatchId) {
+                            watch.disconnect(this._driverWatchId);
+                            this._driverWatchId = null;
+                        }
+                        watch.cancel();
+                        this._startPolling();
                     }
-                    watch.cancel();
-                    this._startPolling();
-                }
-            });
+                });
             this._driverWatch = watch;
         } catch (e) {
             // Watch unsupported: fall back to a slow existence check.
@@ -286,65 +139,6 @@ class BatteryIndicator extends PanelMenu.Button {
         const cr = area.get_context();
         paintMouse(cr, area.width, panelTextIsDark());
         cr.$dispose();
-    }
-
-    /** Reboot the machine (systemd-logind, no confirmation). */
-    _reboot() {
-        try {
-            Gio.Subprocess.new(['gnome-session-quit', '--reboot', '--no-prompt'],
-                Gio.SubprocessFlags.NONE);
-        } catch (e) {
-            Gio.DBus.system.call(
-                'org.freedesktop.login1',
-                '/org/freedesktop/login1',
-                'org.freedesktop.login1.Manager',
-                'Reboot', new GLib.Variant('(b)', [false]), null,
-                Gio.DBusCallFlags.NONE, -1, null, null);
-        }
-    }
-
-    /**
-     * Open the user's default terminal running the one-command installer
-     * (curl | bash). sudo is requested by the script inside the terminal,
-     * so the user types their password there — nothing privileged ever
-     * runs inside gnome-shell.
-     */
-    _launchInstaller() {
-        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
-        let terminal = null;
-        try {
-            terminal = new Gio.Settings({schema_id:
-                'org.gnome.desktop.default-applications.terminal'})
-                .get_string('exec');
-        } catch (e) {}
-        const candidates = [
-            terminal,
-            'x-terminal-emulator', // Debian/Ubuntu default-apps indirection
-            'gnome-terminal', 'kgx', 'konsole', 'xfce4-terminal',
-            'mate-terminal', 'xterm',
-        ].filter(t => t);
-        for (const term of candidates) {
-            let argv = null;
-            if (term === 'xdg-terminal-exec')
-                argv = [term, 'bash', '-c', cmd];
-            else if (term === 'gnome-terminal' || term === 'kgx')
-                argv = [term, '--', 'bash', '-c', cmd];
-            else if (term === 'konsole')
-                argv = [term, '-e', 'bash', '-c', cmd];
-            else if (term === 'xfce4-terminal' || term === 'mate-terminal')
-                argv = [term, '-x', 'bash', '-c', cmd];
-            else
-                argv = [term, '-e', 'bash', '-c', cmd];
-            try {
-                Gio.Subprocess.new(argv,
-                    Gio.SubprocessFlags.NONE);
-                return;
-            } catch (e) {
-                debug(`terminal ${term} failed: ${e.message}`);
-            }
-        }
-        // No terminal found: open the instructions in a browser instead.
-        Gio.AppInfo.launch_default_for_uri(DRIVER_SETUP_URL, null);
     }
 
     _scheduleHotRefresh() {
@@ -382,7 +176,6 @@ class BatteryIndicator extends PanelMenu.Button {
     /** Pure state application — no I/O, safe to call directly. */
     _apply(devices) {
         const pids = Object.keys(devices);
-        const t = new Date().toISOString().slice(11, 23);
         // Hold the last known charge while a device sleeps (sysfs reads 0).
         // The same physical mouse can appear via two transports (cable +
         // dongle): while one is live, a peer reading 0 is a ghost and is
@@ -400,22 +193,20 @@ class BatteryIndicator extends PanelMenu.Button {
         }
         // Drop devices that vanished entirely (unplugged), not just slept.
         for (const pid in this._lastKnown)
-            if (!(pid in devices)) {
-                debug(t, `forget ${pid.slice(-4)} (node gone)`);
+            if (!(pid in devices))
                 delete this._lastKnown[pid];
-            }
-        // Live = reported a fresh nonzero reading this cycle.
-        const live = pids.filter(pid => devices[pid].level > 0 && !devices[pid]._held);
-        for (const pid of pids)
-            delete devices[pid]._held;
         const known = pids.filter(pid => devices[pid].level > 0);
-        debug(t,
-            `raw [${pids.map(pid =>
-                `${pid.slice(-4)}=${devices[pid].level}${devices[pid].charging ? ',chg' : ''}`
-            ).join(' ')}]`,
-            `shown [${known.map(pid => pid.slice(-4)).join(' ')}]`,
-            live.length > 0 ? 'fresh' : 'held/asleep');
-        this._rebuildMenu(devices, known);
+        // Menu is rebuilt only when the state actually changed — rebuilding
+        // every cycle would churn actors for nothing.
+        const menuKey = this._driverMissing
+            ? (this._installRequested ? 'installed' : 'missing')
+            : known.map(pid =>
+                `${pid}:${devices[pid].level}:${devices[pid].charging ? 1 : 0}`)
+                .join('|');
+        if (menuKey !== this._menuKey) {
+            this._menuKey = menuKey;
+            this._rebuildMenu(devices, known);
+        }
         if (pids.length === 0) {
             // Driver bound but no devices: unplugged or still enumerating.
             this._label.text = '—';
@@ -440,14 +231,14 @@ class BatteryIndicator extends PanelMenu.Button {
             if (this._installRequested) {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('Driver installed'), {reactive: false}));
-                this.menu.addAction(_('Reboot'), () =>
-                    this._reboot());
+                this.menu.addAction(_('Reboot'), () => reboot());
             } else {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('OpenRazer driver not installed'), {reactive: false}));
                 this.menu.addAction(_('Install driver'), () => {
                     this._installRequested = true;
-                    this._launchInstaller();
+                    launchInstaller();
+                    this._menuKey = 'installed';
                     this._rebuildMenu({}, []);
                 });
             }
@@ -471,7 +262,7 @@ class BatteryIndicator extends PanelMenu.Button {
     /** Map a sysfs pid to a readable device name. */
     _deviceName(pid) {
         const known = {
-            '0003:1532:00D6': 'Basilisk V3 Pro 35K (провод)',
+            '0003:1532:00D6': 'Basilisk V3 Pro 35K (wired)',
             '0003:1532:00D7': 'Basilisk V3 Pro 35K (dongle)',
         };
         return known[pid] ?? 'Razer ' + pid.split(':').pop();

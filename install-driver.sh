@@ -43,10 +43,7 @@ arch)
 fedora)
     say "Detected Fedora."
     say "Installing: openrazer-meta from the hardware:razer repo."
-    sudo dnf install -y \
-        "https://download.opensuse.org/repositories/hardware:/razer/Fedora_$(rpm -E %fedora)/$(rpm -E %{?repo:noarch})/hardware:razer.repo" \
-        2>/dev/null \
-    || sudo dnf config-manager --add-repo \
+    sudo dnf config-manager --add-repo \
         "https://download.opensuse.org/repositories/hardware:/razer/Fedora_$(rpm -E %fedora)/hardware:razer.repo"
     sudo dnf install -y openrazer-meta
     sudo gpasswd -a "$USER" plugdev || true
@@ -66,8 +63,11 @@ debian)
 opensuse)
     say "Detected openSUSE."
     say "Installing: openrazer-driver-dkms from hardware:razer repo."
+    SUSE_VER="openSUSE_Tumbleweed"
+    grep -q "VERSION_ID=\".*leap" /etc/os-release 2>/dev/null && \
+        SUSE_VER="openSUSE_Leap_\$(. /etc/os-release && echo $VERSION_ID)"
     sudo zypper addrepo \
-        "https://download.opensuse.org/repositories/hardware:/razer/openSUSE_Tumbleweed/hardware:razer.repo"
+        "https://download.opensuse.org/repositories/hardware:/razer/${SUSE_VER}/hardware:razer.repo"
     sudo zypper --gpg-auto-import-keys install -y openrazer-driver-dkms
     sudo gpasswd -a "$USER" plugdev || true
     ;;

@@ -31,14 +31,34 @@ export const MOUSE_PATH = 'M1990 5109 c-577 -74 -1035 -496 -1162 -1072 '
 
 /** Panel text is dark (light theme) or light (dark theme). */
 export function panelTextIsDark() {
+    panelTextIsDark._settings ??= new Gio.Settings(
+        {schema_id: 'org.gnome.desktop.interface'});
     try {
-        const scheme = new Gio.Settings(
-            {schema_id: 'org.gnome.desktop.interface'}).get_string('color-scheme');
+        const scheme = panelTextIsDark._settings.get_string('color-scheme');
         return scheme.includes('light') && !scheme.includes('prefer-dark');
     } catch (e) {
         return false; // default to light text (dark theme)
     }
 }
+
+// MOUSE_PATH parsed once into flat command runs [cmd, ...numbers]; painting
+// replays them without re-running the regex on every repaint.
+const PATH_RUNS = (() => {
+    const re = /([Mmlcz])|(-?\d+\.?\d*)/g;
+    const runs = [];
+    let m;
+    while ((m = re.exec(MOUSE_PATH)) !== null) {
+        if (m[1] !== undefined) {
+            if (m[1] === 'z')
+                runs.push(['z']);
+            else
+                runs.push([m[1]]);
+        } else {
+            runs[runs.length - 1].push(parseFloat(m[2]));
+        }
+    }
+    return runs;
+})();
 
 /** Draw MOUSE_PATH filled on the given Cairo context, fitted into size. */
 export function paintMouse(cr, size, dark) {
@@ -49,46 +69,31 @@ export function paintMouse(cr, size, dark) {
     cr.translate(0, 5120);
     cr.scale(1, -1);
     let x = 0, y = 0;
-    const re = /([Mmlcz])|(-?\d+\.?\d*)/g;
-    let cmd = null;
-    const nums = [];
-    const flush = () => {
-        if (cmd === 'M') {
-            x = nums[0]; y = nums[1];
+    for (const run of PATH_RUNS) {
+        const cmd = run[0];
+        if (cmd === 'z') {
+            cr.closePath();
+        } else if (cmd === 'M') {
+            x = run[1]; y = run[2];
             cr.moveTo(x, y);
         } else if (cmd === 'm') {
-            x += nums[0]; y += nums[1];
+            x += run[1]; y += run[2];
             cr.moveTo(x, y);
         } else if (cmd === 'l') {
-            for (let i = 0; i < nums.length; i += 2) {
-                x += nums[i]; y += nums[i + 1];
+            for (let i = 1; i < run.length; i += 2) {
+                x += run[i]; y += run[i + 1];
                 cr.lineTo(x, y);
             }
         } else if (cmd === 'c') {
-            for (let i = 0; i < nums.length; i += 6) {
-                const x1 = nums[i], y1 = nums[i + 1];
-                const x2 = nums[i + 2], y2 = nums[i + 3];
-                const x3 = nums[i + 4], y3 = nums[i + 5];
+            for (let i = 1; i < run.length; i += 6) {
+                const x1 = run[i], y1 = run[i + 1];
+                const x2 = run[i + 2], y2 = run[i + 3];
+                const x3 = run[i + 4], y3 = run[i + 5];
                 cr.curveTo(x + x1, y + y1, x + x2, y + y2, x + x3, y + y3);
                 x += x3; y += y3;
             }
         }
-        nums.length = 0;
-    };
-    let m;
-    while ((m = re.exec(MOUSE_PATH)) !== null) {
-        if (m[1] !== undefined) {
-            if (cmd) flush();
-            cmd = m[1];
-            if (cmd === 'z') {
-                cr.closePath();
-                cmd = null;
-            }
-        } else {
-            nums.push(parseFloat(m[2]));
-        }
     }
-    if (cmd) flush();
     cr.setFillRule(cairo.FillRule.EVEN_ODD);
     cr.setSourceRGBA(dark ? 0 : 1, dark ? 0 : 1, dark ? 0 : 1, 1);
     cr.fill();
