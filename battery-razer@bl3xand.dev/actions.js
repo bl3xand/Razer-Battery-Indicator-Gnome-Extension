@@ -4,7 +4,7 @@
 // the terminal the installer opens.
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
-import {DRIVER_SETUP_RAW, DRIVER_SETUP_URL} from './constants.js';
+import {DRIVER_SETUP_RAW, DRIVER_SETUP_URL, STORE_BUILD} from './constants.js';
 import {debug} from './log.js';
 
 /**
@@ -14,6 +14,11 @@ import {debug} from './log.js';
  * well-known names — each with its own command-passing syntax.
  */
 export function launchInstaller() {
+    // Store build: no subprocess execution — open the setup instructions.
+    if (STORE_BUILD) {
+        Gio.AppInfo.launch_default_for_uri(DRIVER_SETUP_URL, null);
+        return;
+    }
     const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
     let terminal = null;
     try {
@@ -23,6 +28,7 @@ export function launchInstaller() {
     } catch (e) {}
     const candidates = [
         terminal,
+        'xdg-terminal-exec', // freedesktop standard default
         'x-terminal-emulator', // Debian/Ubuntu default-apps indirection
         'gnome-terminal', 'kgx', 'konsole', 'xfce4-terminal',
         'mate-terminal', 'xterm',
@@ -53,7 +59,7 @@ export function launchInstaller() {
 /** Reboot the machine (session manager, no confirmation dialog). */
 export function reboot() {
     try {
-        Gio.Subprocess.new(['gnome-session-quit', '--reboot', '--no-prompt'],
+        Gio.Subprocess.new(['gnome-session-quit', '--reboot'],
             Gio.SubprocessFlags.NONE);
     } catch (e) {
         Gio.DBus.system.call(

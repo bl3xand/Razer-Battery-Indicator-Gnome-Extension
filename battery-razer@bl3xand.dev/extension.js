@@ -23,7 +23,7 @@ function formatDevice(device) {
 
 const BatteryIndicator = GObject.registerClass(
 class BatteryIndicator extends PanelMenu.Button {
-    _init(settings) {
+    _init(settings, uuid) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
         // Icon: the mouse silhouette drawn from a potrace path embedded in
@@ -48,6 +48,7 @@ class BatteryIndicator extends PanelMenu.Button {
         // BoxLayout fills the full button height; children center inside.
         box.y_expand = true;
         this.add_child(box);
+        this._uuid = uuid;
         this._lowNotified = {};
         this._lastKnown = {};
         this._driverMissing = false;
@@ -61,7 +62,7 @@ class BatteryIndicator extends PanelMenu.Button {
         this._driverWatchId = null;
         this._slowWakeId = null;
         this._destroyed = false;
-        this._menuKey = '';
+        this._menuKey = null;
 
         // Startup: check the kernel driver ONCE. If missing, go dormant
         // ('!' state, zero polling) and watch for the driver dir to appear.
@@ -77,6 +78,10 @@ class BatteryIndicator extends PanelMenu.Button {
     }
 
     _startPolling() {
+        // Delivered-after-destroy watch events and double deliveries must
+        // neither start timers on a dead indicator nor stack a second poll.
+        if (this._destroyed || this._timeoutId !== null)
+            return;
         // Single flat poll, razer-tray style: one interval for awake,
         // asleep and no-devices alike. First refresh runs right here so
         // the indicator is populated without waiting a cycle.
@@ -186,23 +191,25 @@ class BatteryIndicator extends PanelMenu.Button {
                 livePids.length === 0) {
                 devices[pid].level = this._lastKnown[pid].level;
                 devices[pid].charging = false; // asleep means not charging
-                devices[pid]._held = true;
             } else if (devices[pid].level > 0) {
                 this._lastKnown[pid] = {level: devices[pid].level};
             }
         }
         // Drop devices that vanished entirely (unplugged), not just slept.
         for (const pid in this._lastKnown)
-            if (!(pid in devices))
+            if (!(pid in devices)) {
                 delete this._lastKnown[pid];
+                delete this._lowNotified[pid];
+            }
         const known = pids.filter(pid => devices[pid].level > 0);
         // Menu is rebuilt only when the state actually changed — rebuilding
         // every cycle would churn actors for nothing.
         const menuKey = this._driverMissing
             ? (this._installRequested ? 'installed' : 'missing')
-            : known.map(pid =>
-                `${pid}:${devices[pid].level}:${devices[pid].charging ? 1 : 0}`)
-                .join('|');
+            : 'dev:' + (known.length === 0 ? 'none'
+                : pids.map(pid =>
+                    `${pid}:${devices[pid].level}:${devices[pid].charging ? 1 : 0}`)
+                    .join('|'));
         if (menuKey !== this._menuKey) {
             this._menuKey = menuKey;
             this._rebuildMenu(devices, known);
@@ -256,7 +263,8 @@ class BatteryIndicator extends PanelMenu.Button {
             }
         }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.menu.addAction(_('Quit'), () => this.destroy());
+        this.menu.addAction(_('Quit'), () =>
+            Main.extensionManager.disableExtension(this._uuid));
     }
 
     /** Map a sysfs pid to a readable device name. */
@@ -305,7 +313,7 @@ class BatteryIndicator extends PanelMenu.Button {
 
 export default class RazerBatteryExtension extends Extension {
     enable() {
-        this._indicator = new BatteryIndicator(this.getSettings());
+        this._indicator = new BatteryIndicator(this.getSettings(), this.uuid);
         Main.panel.addToStatusArea('battery-razer', this._indicator);
     }
 

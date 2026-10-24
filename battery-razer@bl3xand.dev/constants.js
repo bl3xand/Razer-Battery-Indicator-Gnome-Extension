@@ -27,7 +27,14 @@ export const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 export const DRIVER_SETUP_URL =
     'https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension#openrazer-driver';
 
+// Distribution mode. true  = EGO store build: the Install button opens
+// the README in a browser instead of running a terminal command
+// (extensions.gnome.org reviewers reject shell-execution triggers).
+// false = GitHub/local build: full turnkey terminal installer.
+export const STORE_BUILD = false;
+
 // Raw script URL used by the in-menu installer button (curl | bash).
+// Pinned to a tag when STORE_BUILD is used; main for private builds.
 export const DRIVER_SETUP_RAW =
     'https://raw.githubusercontent.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/main/install-driver.sh';
 

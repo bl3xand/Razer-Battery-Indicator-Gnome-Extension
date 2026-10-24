@@ -82,7 +82,9 @@ export function listInterfaces(callback) {
                     infos = [];
                 }
                 if (infos.length === 0) {
-                    enumerator.close(null);
+                    try {
+                        enumerator.close(null);
+                    } catch (e) {}
                     callback(ids);
                     return;
                 }
