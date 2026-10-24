@@ -206,6 +206,23 @@ class BatteryIndicator extends PanelMenu.Button {
         this._monitorId = null;
         this._destroyed = false;
 
+        // Startup: check the kernel driver ONCE. If missing, go dormant
+        // ('!' state, zero polling) and watch for the driver dir to appear.
+        // If present, start the flat poll and watch for hotplug.
+        this._monitor = null;
+        this._driverWatchId = null;
+        if (Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
+            this._driverMissing = false;
+            this._startPolling();
+        } else {
+            this._driverMissing = true;
+            this._label.text = '!';
+            this._rebuildMenu({}, []);
+            this._watchForDriver();
+        }
+    }
+
+    _startPolling() {
         // Single flat poll, razer-tray style: one interval for awake,
         // asleep and no-devices alike. First refresh runs right here so
         // the indicator is populated without waiting a cycle.
@@ -215,11 +232,9 @@ class BatteryIndicator extends PanelMenu.Button {
                 this._refresh();
                 return GLib.SOURCE_CONTINUE;
             });
-
         // Hotplug: any change in the driver directory (cable plug/unplug
         // adds or removes a device) refreshes immediately instead of
         // waiting for the next poll.
-        this._monitor = null;
         try {
             this._monitor = Gio.File.new_for_path(SCAN_DIR).monitor_directory(
                 Gio.FileMonitorFlags.NONE, null);
@@ -230,11 +245,90 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
+    /** Dormant mode: wake up as soon as the driver directory appears. */
+    _watchForDriver() {
+        try {
+            const drivers = Gio.File.new_for_path('/sys/bus/hid/drivers');
+            const watch = drivers.monitor_directory(
+                Gio.FileMonitorFlags.NONE, null);
+            this._driverWatchId = watch.connect('changed', (mon, file, other, evtype) => {
+                if (file && file.get_basename() === 'razermouse' &&
+                    Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
+                    debug('driver appeared, waking up');
+                    this._driverMissing = false;
+                    if (this._driverWatchId) {
+                        watch.disconnect(this._driverWatchId);
+                        this._driverWatchId = null;
+                    }
+                    watch.cancel();
+                    this._startPolling();
+                }
+            });
+            this._driverWatch = watch;
+        } catch (e) {
+            // Watch unsupported: fall back to a slow existence check.
+            this._driverWatchId = null;
+            this._slowWakeId = GLib.timeout_add_seconds(
+                GLib.PRIORITY_DEFAULT, 30, () => {
+                    if (Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
+                        this._driverMissing = false;
+                        this._startPolling();
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                });
+        }
+    }
+
     /** Draw the mouse silhouette (see mouseIcon.js). */
     _paintIcon(area) {
         const cr = area.get_context();
         paintMouse(cr, area.width, panelTextIsDark());
         cr.$dispose();
+    }
+
+    /**
+     * Open the user's default terminal running the one-command installer
+     * (curl | bash). sudo is requested by the script inside the terminal,
+     * so the user types their password there — nothing privileged ever
+     * runs inside gnome-shell.
+     */
+    _launchInstaller() {
+        const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
+        let terminal = null;
+        try {
+            terminal = new Gio.Settings({schema_id:
+                'org.gnome.desktop.default-applications.terminal'})
+                .get_string('exec');
+        } catch (e) {}
+        const candidates = [
+            terminal,
+            'x-terminal-emulator', // Debian/Ubuntu default-apps indirection
+            'gnome-terminal', 'kgx', 'konsole', 'xfce4-terminal',
+            'mate-terminal', 'xterm',
+        ].filter(t => t);
+        for (const term of candidates) {
+            let argv = null;
+            if (term === 'xdg-terminal-exec')
+                argv = [term, 'bash', '-c', cmd];
+            else if (term === 'gnome-terminal' || term === 'kgx')
+                argv = [term, '--', 'bash', '-c', cmd];
+            else if (term === 'konsole')
+                argv = [term, '-e', 'bash', '-c', cmd];
+            else if (term === 'xfce4-terminal' || term === 'mate-terminal')
+                argv = [term, '-x', 'bash', '-c', cmd];
+            else
+                argv = [term, '-e', 'bash', '-c', cmd];
+            try {
+                Gio.Subprocess.new(argv,
+                    Gio.SubprocessFlags.NONE);
+                return;
+            } catch (e) {
+                debug(`terminal ${term} failed: ${e.message}`);
+            }
+        }
+        // No terminal found: open the instructions in a browser instead.
+        Gio.AppInfo.launch_default_for_uri(DRIVER_SETUP_URL, null);
     }
 
     _scheduleHotRefresh() {
@@ -307,13 +401,8 @@ class BatteryIndicator extends PanelMenu.Button {
             live.length > 0 ? 'fresh' : 'held/asleep');
         this._rebuildMenu(devices, known);
         if (pids.length === 0) {
-            // No Razer interfaces at all: either no device plugged in, or
-            // the OpenRazer kernel driver is missing. Distinguish: the
-            // driver directory itself only exists when the module is loaded.
-            const driverLoaded =
-                Gio.File.new_for_path(SCAN_DIR).query_exists(null);
-            this._label.text = driverLoaded ? '—' : '!';
-            this._driverMissing = !driverLoaded;
+            // Driver bound but no devices: unplugged or still enumerating.
+            this._label.text = '—';
             return;
         }
         if (known.length === 0) {
@@ -334,9 +423,10 @@ class BatteryIndicator extends PanelMenu.Button {
         if (this._driverMissing) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('OpenRazer driver not installed'), {reactive: false}));
-            this.menu.addAction(_('How to install'), () =>
-                Gio.AppInfo.launch_default_for_uri(
-                    DRIVER_SETUP_URL, null));
+            this.menu.addAction(_('Install driver'), () =>
+                this._launchInstaller());
+            this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                _('Reboot required after install'), {reactive: false}));
         } else if (pids.length === 0) {
             this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                 _('No devices found'), {reactive: false}));
@@ -381,6 +471,13 @@ class BatteryIndicator extends PanelMenu.Button {
         this._destroyed = true;
         this._removeTimeout('_timeoutId');
         this._removeTimeout('_debounceId');
+        this._removeTimeout('_slowWakeId');
+        if (this._driverWatch) {
+            if (this._driverWatchId)
+                this._driverWatch.disconnect(this._driverWatchId);
+            this._driverWatch.cancel();
+            this._driverWatch = null;
+        }
         if (this._monitor) {
             if (this._monitorId)
                 this._monitor.disconnect(this._monitorId);

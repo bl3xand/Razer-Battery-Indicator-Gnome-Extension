@@ -27,6 +27,10 @@ export const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 export const DRIVER_SETUP_URL =
     'https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension#openrazer-driver';
 
+// Raw script URL used by the in-menu installer button (curl | bash).
+export const DRIVER_SETUP_RAW =
+    'https://raw.githubusercontent.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/main/install-driver.sh';
+
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color
 // emoji. Used for the charging bolt.
