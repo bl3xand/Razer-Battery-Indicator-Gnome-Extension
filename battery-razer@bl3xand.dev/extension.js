@@ -75,6 +75,24 @@ class BatteryIndicator extends PanelMenu.Button {
             this._rebuildMenu({}, []);
             this._watchForDriver();
         }
+        // While waiting for the user to reboot after an install, the menu
+        // content depends on the installer's progress — re-evaluate it each
+        // time the menu is opened instead of polling in the background.
+        this.menu.connect('open-state-changed', (menu, open) => {
+            if (open && this._driverMissing && this._installRequested)
+                this._rebuildMenu({}, []);
+        });
+    }
+
+    /**
+     * Whether the installer has actually placed the driver on disk. The
+     * kernel module itself only appears after reboot — this is the closest
+     * verifiable fact meanwhile. DKMS names the module 'openrazer-driver'
+     * on every supported distro; a non-DKMS manual install is not covered.
+     */
+    _driverInstalled() {
+        return Gio.File.new_for_path('/var/lib/dkms/openrazer-driver')
+            .query_exists(null);
     }
 
     _startPolling() {
@@ -236,9 +254,17 @@ class BatteryIndicator extends PanelMenu.Button {
         const pids = known.length > 0 ? known : Object.keys(devices);
         if (this._driverMissing) {
             if (this._installRequested) {
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                    _('Driver installed'), {reactive: false}));
-                this.menu.addAction(_('Reboot'), () => reboot());
+                // The kernel module only loads at boot, so "installed"
+                // cannot be verified until the user reboots. The best
+                // verifiable fact at this point is the package presence.
+                if (this._driverInstalled()) {
+                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                        _('Driver installed'), {reactive: false}));
+                    this.menu.addAction(_('Need reboot'), () => reboot());
+                } else {
+                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                        _('Installing — check the terminal'), {reactive: false}));
+                }
             } else {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('OpenRazer driver not installed'), {reactive: false}));

@@ -43,8 +43,10 @@ add_group() {
     # Add the user to the driver group and VERIFY — a failed group add must
     # not be silently swallowed, the extension depends on it after reboot.
     local grp="$1"
+    # Verify against /etc/group, NOT `id -nG`: the current session does not
+    # include the new group until the reboot the script asks for anyway.
     sudo gpasswd -a "$USER" "$grp"
-    if ! id -nG "$USER" | grep -qw "$grp"; then
+    if ! getent group "$grp" | grep -qw "$USER"; then
         say "WARNING: could not add $USER to group '$grp'."
         say "Run manually:  sudo gpasswd -a $USER $grp"
         exit 1
@@ -66,8 +68,10 @@ arch)
         HDRS="linux$(echo "$KVER" | sed -E 's/^([0-9]+)\.([0-9]+).*/\1\2/')-headers"
     fi
     say "Installing: openrazer-driver-dkms (+ $HDRS if missing)."
-    sudo pacman -S --needed "$HDRS"
-    sudo pacman -S --needed openrazer-driver-dkms
+    # stdin is the curl pipe: pacman's interactive [Y/n] prompt would eat
+    # the undelivered rest of the script. Point it at the real terminal.
+    sudo pacman -S --needed "$HDRS" < /dev/tty
+    sudo pacman -S --needed openrazer-driver-dkms < /dev/tty
     # Arch packages the udev group as 'openrazer' since Nov 2025.
     add_group openrazer
     ;;
