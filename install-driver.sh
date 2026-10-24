@@ -75,8 +75,8 @@ esac
 
 YELLOW="\033[1;33m"; RESET="\033[0m"
 echo ""
-echo -e "${YELLOW}Done. IMPORTANT: reboot now — the kernel module and the group${RESET}"
-echo -e "${YELLOW}permission only take effect after a reboot.${RESET}"
+echo -e "${YELLOW}Done. You need to reboot your PC (or at least log out and${RESET}"
+echo -e "${YELLOW}back in) for the kernel module and group permissions to take effect.${RESET}"
 echo ""
 say "If Secure Boot blocks the module, see:"
 say "https://github.com/openrazer/openrazer/wiki/Troubleshooting"
