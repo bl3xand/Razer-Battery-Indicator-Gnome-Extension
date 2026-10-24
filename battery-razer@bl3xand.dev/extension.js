@@ -288,6 +288,21 @@ class BatteryIndicator extends PanelMenu.Button {
         cr.$dispose();
     }
 
+    /** Log out of the GNOME session (systemd-logind, no confirmation). */
+    _logout() {
+        try {
+            Gio.Subprocess.new(['gnome-session-quit', '--logout', '--no-prompt'],
+                Gio.SubprocessFlags.NONE);
+        } catch (e) {
+            // Fallback: logind D-Bus call.
+            Gio.DBus.system.call(
+                'org.freedesktop.login1',
+                '/org/freedesktop/login1/session/auto',
+                'org.freedesktop.login1.Session',
+                'Terminate', null, null, Gio.DBusCallFlags.NONE, -1, null, null);
+        }
+    }
+
     /**
      * Open the user's default terminal running the one-command installer
      * (curl | bash). sudo is requested by the script inside the terminal,
@@ -425,8 +440,8 @@ class BatteryIndicator extends PanelMenu.Button {
             if (this._installRequested) {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('Driver installed'), {reactive: false}));
-                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                    _('Log out and back in to finish setup'), {reactive: false}));
+                this.menu.addAction(_('Log out and back in'), () =>
+                    this._logout());
             } else {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('OpenRazer driver not installed'), {reactive: false}));
