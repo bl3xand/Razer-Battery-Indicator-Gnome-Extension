@@ -73,11 +73,12 @@ opensuse)
     ;;
 esac
 
+say ""
+say "If Secure Boot blocks the module, see:"
+say "https://github.com/openrazer/openrazer/wiki/Troubleshooting"
 YELLOW="\033[1;33m"; RESET="\033[0m"
 echo ""
 echo -e "${YELLOW}Done. To finish setup, log out and back in, or reboot your PC.${RESET}"
 echo ""
-say "If Secure Boot blocks the module, see:"
-say "https://github.com/openrazer/openrazer/wiki/Troubleshooting"
-echo ""
-read -rp "Press Enter to close this window..." _
+# stdin is the curl pipe — read the keyboard from the terminal directly.
+read -rp "Press Enter to close this window..." _ < /dev/tty
