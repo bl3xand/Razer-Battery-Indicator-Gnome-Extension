@@ -32,8 +32,8 @@ driver) directly in the GNOME top panel.
 ## Install
 
 ```bash
-git clone https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension.git
-cp -r Razer-Battery-Indicator-Gnome-Extension/battery-razer@bl3xand.dev ~/.local/share/gnome-shell/extensions/
+git clone https://github.com/bl3xand/Razer-Battery.git
+cp -r Razer-Battery/battery-razer@bl3xand.dev ~/.local/share/gnome-shell/extensions/
 glib-compile-schemas ~/.local/share/gnome-shell/extensions/battery-razer@bl3xand.dev/schemas
 gnome-extensions enable battery-razer@bl3xand.dev
 ```
@@ -62,7 +62,7 @@ The extension reads the battery level exposed by the driver in sysfs.
 adds your user to the right group:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/main/install-driver.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bl3xand/Razer-Battery/main/install-driver.sh | bash
 ```
 
 What it does per distro:
@@ -86,7 +86,7 @@ Other distros: see the [official OpenRazer instructions](https://openrazer.githu
 - Arch Linux (Razer Basilisk V3 Pro 35K)
 
 Found a problem on your system? **Please open an
-[issue](https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/issues)** —
+[issue](https://github.com/bl3xand/Razer-Battery/issues)** —
 include your distro, GNOME Shell version and the output of
 `journalctl -b /usr/bin/gnome-shell | grep battery-razer`.
 
