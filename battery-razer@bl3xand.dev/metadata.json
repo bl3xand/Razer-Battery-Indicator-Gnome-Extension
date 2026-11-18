@@ -1,13 +1,13 @@
 {
   "uuid": "battery-razer@bl3xand.dev",
   "name": "Razer Battery",
-  "description": "Razer wireless device battery in the top panel, deduped by device.\n\nFeatures:\n- Live battery percentage with a charging marker and a theme-adaptive icon\n- One entry per device: several sysfs interfaces of the same mouse (wired + dongle) are deduplicated\n- Fully asynchronous sysfs reads: a sleeping mouse never blocks the shell\n- Sleep-aware: the last known charge is held while the device sleeps\n- Instant hotplug reaction via a filesystem watch\n- Low-battery notification with a configurable threshold\n- Zero overhead when the OpenRazer driver is missing: dormant mode, single '!' in the panel\n\nRequires the OpenRazer kernel driver. If it's missing, the indicator shows '!' and the menu offers a one-command guided install (Arch and derivatives, Fedora, Ubuntu, Debian, openSUSE). Nothing privileged runs inside the shell.\n\nFound a bug? Please report it on GitHub.",
+  "description": "Battery level of Razer wireless mice in the panel. Requires the OpenRazer kernel driver. Asynchronous serial reads, sleep-aware caching, hotplug monitoring and configurable low-battery notifications. The Git package can open a driver installer; the extensions.gnome.org package opens setup instructions.",
   "shell-version": [
     "50",
     "51"
   ],
-  "version": 6,
-  "version-name": "0.1.1",
+  "version": 7,
+  "version-name": "0.1.2",
   "settings-schema": "org.gnome.shell.extensions.battery-razer",
   "url": "https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension"
 }

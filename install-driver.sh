@@ -15,6 +15,20 @@ set -e
 
 say() { echo "[razer-battery] $*"; }
 
+kernel_headers() {
+    local release="$1"
+    local modules_dir="${2:-/usr/lib/modules}"
+    local pkgbase=""
+    if [ ! -r "$modules_dir/$release/pkgbase" ]; then
+        return 1
+    fi
+    IFS= read -r pkgbase < "$modules_dir/$release/pkgbase" || [ -n "$pkgbase" ] || return 1
+    case "$pkgbase" in
+        ''|*[!a-zA-Z0-9._+-]*) return 1 ;;
+    esac
+    printf '%s-headers\n' "$pkgbase"
+}
+
 # --- distro detection -------------------------------------------------------
 if [ -f /etc/arch-release ]; then
     DISTRO=arch
@@ -61,11 +75,10 @@ arch)
     # linux/linux-headers, Manjaro and other derivatives name them
     # linux61/linux61-headers etc.
     KVER="$(uname -r)"
-    if [[ "$KVER" == *arch1-1 || "$KVER" == *arch*-1 ]]; then
-        HDRS="linux-headers"
-    else
-        # e.g. 6.6.14-2-MANJARO -> linux66-headers
-        HDRS="linux$(echo "$KVER" | sed -E 's/^([0-9]+)\.([0-9]+).*/\1\2/')-headers"
+    if ! HDRS="$(kernel_headers "$KVER")"; then
+        say "Cannot identify the running kernel package from /usr/lib/modules/$KVER/pkgbase."
+        say "Install matching kernel headers manually, then run this script again."
+        exit 1
     fi
     say "Installing: openrazer-driver-dkms (+ $HDRS if missing)."
     # stdin is the curl pipe: pacman's interactive [Y/n] prompt would eat

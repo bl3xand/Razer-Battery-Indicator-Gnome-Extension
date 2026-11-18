@@ -1,8 +1,7 @@
 // Panel icon: the owner's mouse silhouette drawn straight from a potrace
 // path — no image files, no GdkPixbuf, no icon-theme installation. Cairo
-// fills the path with the color contrasting the panel color-scheme.
+// fills the path using the panel foreground color.
 import cairo from 'gi://cairo';
-import Gio from 'gi://Gio';
 
 // potrace output of the silhouette (SVG viewBox 512; the group transform
 // translate(0,512) scale(0.1,-0.1) is applied when drawing).
@@ -29,18 +28,6 @@ export const MOUSE_PATH = 'M1990 5109 c-577 -74 -1035 -496 -1162 -1072 '
     + '-4 -266 -11 -290 -22 -77 -115 -136 -192 -120 -46 10 -93 44 -116 86 '
     + '-20 35 -21 53 -21 325 0 275 1 291 21 323 46 77 111 103 194 80z';
 
-/** Panel text is dark (light theme) or light (dark theme). */
-export function panelTextIsDark() {
-    panelTextIsDark._settings ??= new Gio.Settings(
-        {schema_id: 'org.gnome.desktop.interface'});
-    try {
-        const scheme = panelTextIsDark._settings.get_string('color-scheme');
-        return scheme.includes('light') && !scheme.includes('prefer-dark');
-    } catch (e) {
-        return false; // default to light text (dark theme)
-    }
-}
-
 // MOUSE_PATH parsed once into flat command runs [cmd, ...numbers]; painting
 // replays them without re-running the regex on every repaint.
 const PATH_RUNS = (() => {
@@ -61,7 +48,7 @@ const PATH_RUNS = (() => {
 })();
 
 /** Draw MOUSE_PATH filled on the given Cairo context, fitted into size. */
-export function paintMouse(cr, size, dark) {
+export function paintMouse(cr, size, color) {
     cr.save();
     // viewBox 512 -> DrawingArea pixels, then the SVG group transform.
     cr.scale(size / 512, size / 512);
@@ -95,7 +82,7 @@ export function paintMouse(cr, size, dark) {
         }
     }
     cr.setFillRule(cairo.FillRule.EVEN_ODD);
-    cr.setSourceRGBA(dark ? 0 : 1, dark ? 0 : 1, dark ? 0 : 1, 1);
+    cr.setSourceRGBA(color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255);
     cr.fill();
     cr.restore();
 }

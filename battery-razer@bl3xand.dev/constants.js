@@ -1,12 +1,8 @@
 // Tunable constants for the indicator.
 
-// sysfs exposes no change events for charge level/status (inotify only
-// sees directory entries, not attribute values), so the only way to catch
-// a charging flip quickly is to poll. razer-tray model: one flat interval
-// for everything (awake, asleep, charging) — 5 s reading two tiny files
-// costs nothing, and a single constant means no timer-state machine to
-// get wrong.
-export const POLL_SEC = 5;
+// Battery attributes do not emit value-change events in sysfs.
+export const POLL_SEC = 30;
+export const SLEEP_POLL_SEC = 120;
 
 // Hotplug events (device add/remove in the driver directory) arrive in
 // bursts — one refresh this long after the last event.
@@ -27,14 +23,8 @@ export const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 export const DRIVER_SETUP_URL =
     'https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension#openrazer-driver';
 
-// Distribution mode. true  = EGO store build: the Install button opens
-// the README in a browser instead of running a terminal command
-// (extensions.gnome.org reviewers reject shell-execution triggers).
-// false = GitHub/local build: full turnkey terminal installer.
-export const STORE_BUILD = false;
-
 // Raw script URL used by the in-menu installer button (curl | bash).
-// Pinned to a tag when STORE_BUILD is used; main for private builds.
+// Only included in the Git/local package; the store ships a help-only action.
 export const DRIVER_SETUP_RAW =
     'https://raw.githubusercontent.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/main/install-driver.sh';
 

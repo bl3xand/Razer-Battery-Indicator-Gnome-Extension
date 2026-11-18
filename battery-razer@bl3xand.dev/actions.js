@@ -1,10 +1,5 @@
-// External-process helpers: launching the driver installer in the user's
-// default terminal and rebooting via the session manager. Nothing
-// privileged ever runs inside gnome-shell — sudo is typed by the user in
-// the terminal the installer opens.
-import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
-import {DRIVER_SETUP_RAW, DRIVER_SETUP_URL, STORE_BUILD} from './constants.js';
+import {DRIVER_SETUP_RAW, DRIVER_SETUP_URL} from './constants.js';
 import {debug} from './log.js';
 
 /**
@@ -13,18 +8,14 @@ import {debug} from './log.js';
  * then distro conventions (x-terminal-emulator, xdg-terminal-exec), then
  * well-known names — each with its own command-passing syntax.
  */
-export function launchInstaller() {
-    // Store build: no subprocess execution — open the setup instructions.
-    if (STORE_BUILD) {
-        Gio.AppInfo.launch_default_for_uri(DRIVER_SETUP_URL, null);
-        return;
-    }
+export async function launchInstaller(cancellable) {
     const cmd = `curl -fsSL ${DRIVER_SETUP_RAW} | bash`;
     let terminal = null;
     try {
-        terminal = new Gio.Settings({schema_id:
-            'org.gnome.desktop.default-applications.terminal'})
-            .get_string('exec');
+        const schema = Gio.SettingsSchemaSource.get_default()
+            .lookup('org.gnome.desktop.default-applications.terminal', true);
+        if (schema)
+            terminal = new Gio.Settings({settings_schema: schema}).get_string('exec');
     } catch (e) {}
     const candidates = [
         terminal,
@@ -47,26 +38,21 @@ export function launchInstaller() {
             argv = [term, '-e', 'bash', '-c', cmd];
         try {
             Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
-            return;
+            return true;
         } catch (e) {
             debug(`terminal ${term} failed: ${e.message}`);
         }
     }
-    // No terminal found: open the instructions in a browser instead.
-    Gio.AppInfo.launch_default_for_uri(DRIVER_SETUP_URL, null);
-}
-
-/** Reboot the machine (session manager, no confirmation dialog). */
-export function reboot() {
-    try {
-        Gio.Subprocess.new(['gnome-session-quit', '--reboot'],
-            Gio.SubprocessFlags.NONE);
-    } catch (e) {
-        Gio.DBus.system.call(
-            'org.freedesktop.login1',
-            '/org/freedesktop/login1',
-            'org.freedesktop.login1.Manager',
-            'Reboot', new GLib.Variant('(b)', [false]), null,
-            Gio.DBusCallFlags.NONE, -1, null, () => {});
-    }
+    await new Promise((resolve, reject) => {
+        Gio.AppInfo.launch_default_for_uri_async(DRIVER_SETUP_URL, null,
+            cancellable, (source, result) => {
+                try {
+                    Gio.AppInfo.launch_default_for_uri_finish(result);
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            });
+    });
+    return false;
 }

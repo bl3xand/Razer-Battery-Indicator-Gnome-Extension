@@ -7,11 +7,12 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {Extension, gettext as _} from 'resource:///org/gnome/shell/extensions/extension.js';
-import {POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, SCAN_DIR, BOLT}
+import {POLL_SEC, SLEEP_POLL_SEC, HOTPLUG_DEBOUNCE_SEC, ICON_PX, SCAN_DIR, BOLT}
     from './constants.js';
-import {paintMouse, panelTextIsDark} from './mouseIcon.js';
-import {readBatteriesAsync} from './battery.js';
-import {launchInstaller, reboot} from './actions.js';
+import {paintMouse} from './mouseIcon.js';
+import {BatteryReader} from './battery.js';
+import {ActivityWatch} from './activity.js';
+import {launchInstaller} from './actions.js';
 import {debug} from './log.js';
 
 /** One panel entry per live device: "100%" or "85% ⚡". */
@@ -26,9 +27,7 @@ class BatteryIndicator extends PanelMenu.Button {
     _init(settings, uuid) {
         super._init(0.0, 'Razer Battery');
         this._settings = settings;
-        // Icon: the mouse silhouette drawn from a potrace path embedded in
-        // mouseIcon.js (no image files). Cairo fills it with the color
-        // contrasting the panel color-scheme.
+        // Use the panel foreground color, including custom themes.
         this._label = new St.Label({
             text: '…',
             y_align: Clutter.ActorAlign.CENTER,
@@ -42,7 +41,8 @@ class BatteryIndicator extends PanelMenu.Button {
         // without y_align a Box child sticks to the top of the pill.
         icon.y_align = Clutter.ActorAlign.CENTER;
         icon.y_expand = true;
-        icon.connect('repaint', (area) => this._paintIcon(area));
+        this._icon = icon;
+        this._repaintId = icon.connect('repaint', area => this._paintIcon(area));
         box.add_child(icon);
         box.add_child(this._label);
         // BoxLayout fills the full button height; children center inside.
@@ -54,147 +54,144 @@ class BatteryIndicator extends PanelMenu.Button {
         this._driverMissing = false;
         this._installRequested = false;
         this._reading = false;
-        this._timeoutId = null;
-        this._debounceId = null;
-        this._monitorId = null;
+        this._refreshQueued = false;
+        this._timeoutId = 0;
+        this._debounceId = 0;
+        this._monitorId = 0;
         this._monitor = null;
+        this._driverWatchId = 0;
         this._driverWatch = null;
-        this._driverWatchId = null;
-        this._slowWakeId = null;
-        this._menuOpenId = null;
-        this._destroyed = false;
         this._menuKey = null;
-
-        // Startup: check the kernel driver ONCE. If missing, go dormant
-        // ('!' state, zero polling) and watch for the driver dir to appear.
-        // If present, start the flat poll and watch for hotplug.
-        if (Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
-            this._startPolling();
-        } else {
-            this._driverMissing = true;
-            this._label.text = '!';
-            this._rebuildMenu({}, []);
-            this._watchForDriver();
-        }
-        // While waiting for the user to reboot after an install, the menu
-        // content depends on the installer's progress — re-evaluate it each
-        // time the menu is opened instead of polling in the background.
-        this._menuOpenId = this.menu.connect('open-state-changed', (menu, open) => {
-            if (open && this._driverMissing && this._installRequested)
-                this._rebuildMenu({}, []);
-        });
-    }
-
-    /**
-     * Whether the installer has actually placed the driver on disk. The
-     * kernel module itself only appears after reboot — this is the closest
-     * verifiable fact meanwhile. DKMS names the module 'openrazer-driver'
-     * on every supported distro; a non-DKMS manual install is not covered.
-     */
-    _driverInstalled() {
-        return Gio.File.new_for_path('/var/lib/dkms/openrazer-driver')
-            .query_exists(null);
-    }
-
-    _startPolling() {
-        // Delivered-after-destroy watch events and double deliveries must
-        // neither start timers on a dead indicator nor stack a second poll.
-        if (this._destroyed || this._timeoutId !== null)
-            return;
-        // Single flat poll, razer-tray style: one interval for awake,
-        // asleep and no-devices alike. First refresh runs right here so
-        // the indicator is populated without waiting a cycle.
+        this._cancellable = new Gio.Cancellable();
+        this._reader = new BatteryReader();
+        this._activity = new ActivityWatch(global.backend, () => this._refreshOnActivity());
+        this._watchDriver();
         this._refresh();
-        this._timeoutId = GLib.timeout_add_seconds(
-            GLib.PRIORITY_DEFAULT, POLL_SEC, () => {
-                this._refresh();
-                return GLib.SOURCE_CONTINUE;
+    }
+
+    _watchDriver() {
+        try {
+            this._driverWatch = Gio.File.new_for_path('/sys/bus/hid/drivers')
+                .monitor_directory(Gio.FileMonitorFlags.NONE, this._cancellable);
+            this._driverWatchId = this._driverWatch.connect('changed', (monitor, file) => {
+                if (file && file.get_basename() === 'razermouse')
+                    this._scheduleHotRefresh();
             });
-        // Hotplug: any change in the driver directory (cable plug/unplug
-        // adds or removes a device) refreshes immediately instead of
-        // waiting for the next poll.
-        try {
-            this._monitor = Gio.File.new_for_path(SCAN_DIR).monitor_directory(
-                Gio.FileMonitorFlags.NONE, null);
-            this._monitorId = this._monitor.connect('changed',
-                () => { debug('hotplug event'); this._scheduleHotRefresh(); });
-        } catch (e) {
-            this._monitor = null; // sysfs watches unsupported — poll only
+        } catch (error) {
+            debug(`driver watch unavailable: ${error.message}`);
         }
     }
 
-    /** Dormant mode: wake up as soon as the driver directory appears. */
-    _watchForDriver() {
+    _watchDevices() {
+        if (this._monitor)
+            return;
         try {
-            const watch = Gio.File.new_for_path('/sys/bus/hid/drivers')
-                .monitor_directory(Gio.FileMonitorFlags.NONE, null);
-            this._driverWatchId = watch.connect('changed',
-                (mon, file, other, evtype) => {
-                    if (file && file.get_basename() === 'razermouse' &&
-                        Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
-                        debug('driver appeared, waking up');
-                        this._driverMissing = false;
-                        if (this._driverWatchId) {
-                            watch.disconnect(this._driverWatchId);
-                            this._driverWatchId = null;
-                        }
-                        watch.cancel();
-                        this._startPolling();
-                    }
-                });
-            this._driverWatch = watch;
-        } catch (e) {
-            // Watch unsupported: fall back to a slow existence check.
-            this._driverWatchId = null;
-            this._slowWakeId = GLib.timeout_add_seconds(
-                GLib.PRIORITY_DEFAULT, 30, () => {
-                    if (Gio.File.new_for_path(SCAN_DIR).query_exists(null)) {
-                        this._driverMissing = false;
-                        this._startPolling();
-                        return GLib.SOURCE_REMOVE;
-                    }
-                    return GLib.SOURCE_CONTINUE;
-                });
+            this._monitor = Gio.File.new_for_path(SCAN_DIR)
+                .monitor_directory(Gio.FileMonitorFlags.NONE, this._cancellable);
+            this._monitorId = this._monitor.connect('changed', () => this._scheduleHotRefresh());
+        } catch (error) {
+            debug(`device watch unavailable: ${error.message}`);
         }
     }
 
-    /** Draw the mouse silhouette (see mouseIcon.js). */
     _paintIcon(area) {
         const cr = area.get_context();
-        paintMouse(cr, area.width, panelTextIsDark());
-        cr.$dispose();
+        try {
+            paintMouse(cr, area.width, area.get_theme_node().get_foreground_color());
+        } finally {
+            cr.$dispose();
+        }
     }
 
     _scheduleHotRefresh() {
-        // Enumeration fires a burst of events — one refresh after the burst.
-        if (this._debounceId !== null)
+        if (!this._cancellable || this._cancellable.is_cancelled() || this._debounceId)
             return;
+        if (this._timeoutId) {
+            GLib.Source.remove(this._timeoutId);
+            this._timeoutId = 0;
+        }
         this._debounceId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, HOTPLUG_DEBOUNCE_SEC, () => {
-                this._debounceId = null;
+                this._debounceId = 0;
                 this._refresh();
                 return GLib.SOURCE_REMOVE;
             });
     }
 
-    _removeTimeout(prop) {
-        if (this[prop] !== null) {
-            GLib.source_remove(this[prop]);
-            this[prop] = null;
+    _refreshOnActivity() {
+        if (!this._cancellable || this._cancellable.is_cancelled() || this._driverMissing)
+            return;
+        if (this._timeoutId) {
+            GLib.Source.remove(this._timeoutId);
+            this._timeoutId = 0;
         }
+        if (this._debounceId) {
+            GLib.Source.remove(this._debounceId);
+            this._debounceId = 0;
+        }
+        this._refresh();
     }
 
-    /** One poll cycle. Async: applies the state once reads complete. */
-    _refresh() {
-        if (this._destroyed || this._reading)
+    _schedulePoll(seconds) {
+        if (this._timeoutId) {
+            GLib.Source.remove(this._timeoutId);
+            this._timeoutId = 0;
+        }
+        if (this._debounceId || !this._cancellable || this._cancellable.is_cancelled())
             return;
-        this._reading = true;
-        readBatteriesAsync(devices => {
-            this._reading = false;
-            if (this._destroyed)
-                return;
-            this._apply(devices);
+        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
+            this._timeoutId = 0;
+            this._refresh();
+            return GLib.SOURCE_REMOVE;
         });
+    }
+
+    async _refresh() {
+        const cancellable = this._cancellable;
+        if (!cancellable || cancellable.is_cancelled())
+            return;
+        if (this._reading) {
+            this._refreshQueued = true;
+            return;
+        }
+        this._reading = true;
+        this._refreshQueued = false;
+        let delay = SLEEP_POLL_SEC;
+        try {
+            const devices = await this._reader.read();
+            if (cancellable.is_cancelled())
+                return;
+            this._driverMissing = false;
+            this._watchDevices();
+            if (Object.values(devices).some(device => device.level > 0))
+                delay = POLL_SEC;
+            this._apply(devices);
+        } catch (error) {
+            if (cancellable.is_cancelled())
+                return;
+            if (error instanceof GLib.Error && error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND)) {
+                this._driverMissing = true;
+                if (this._monitor) {
+                    this._monitor.disconnect(this._monitorId);
+                    this._monitorId = 0;
+                    this._monitor.cancel();
+                    this._monitor = null;
+                }
+                this._label.text = '!';
+                this._menuKey = null;
+                this._rebuildMenu({}, []);
+            } else {
+                debug(`battery read failed: ${error.message}`);
+            }
+        } finally {
+            this._reading = false;
+            if (!cancellable.is_cancelled()) {
+                if (this._refreshQueued)
+                    this._refresh();
+                else if (!this._driverMissing || !this._driverWatch)
+                    this._schedulePoll(delay);
+            }
+        }
     }
 
     /** Pure state application — no I/O, safe to call directly. */
@@ -255,25 +252,24 @@ class BatteryIndicator extends PanelMenu.Button {
         const pids = known.length > 0 ? known : Object.keys(devices);
         if (this._driverMissing) {
             if (this._installRequested) {
-                // The kernel module only loads at boot, so "installed"
-                // cannot be verified until the user reboots. The best
-                // verifiable fact at this point is the package presence.
-                if (this._driverInstalled()) {
-                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                        _('Driver installed'), {reactive: false}));
-                    this.menu.addAction(_('Need reboot'), () => reboot());
-                } else {
-                    this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
-                        _('Installing — check the terminal'), {reactive: false}));
-                }
+                this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
+                    _('Finish setup in the terminal, then restart the computer'), {reactive: false}));
             } else {
                 this.menu.addMenuItem(new PopupMenu.PopupMenuItem(
                     _('OpenRazer driver not installed'), {reactive: false}));
-                this.menu.addAction(_('Install driver'), () => {
-                    this._installRequested = true;
-                    launchInstaller();
-                    this._menuKey = 'installed';
-                    this._rebuildMenu({}, []);
+                this.menu.addAction(_('Driver setup'), async () => {
+                    const cancellable = this._cancellable;
+                    try {
+                        const started = await launchInstaller(cancellable);
+                        if (cancellable.is_cancelled())
+                            return;
+                        this._installRequested = started;
+                        this._menuKey = null;
+                        this._rebuildMenu({}, []);
+                    } catch (error) {
+                        if (!cancellable.is_cancelled())
+                            Main.notifyError('Razer Battery', error.message);
+                    }
                 });
             }
         } else if (pids.length === 0) {
@@ -317,29 +313,43 @@ class BatteryIndicator extends PanelMenu.Button {
         }
     }
 
-    vfunc_destroy() {
-        this._destroyed = true;
-        this._removeTimeout('_timeoutId');
-        this._removeTimeout('_debounceId');
-        this._removeTimeout('_slowWakeId');
-        if (this._menuOpenId) {
-            this.menu.disconnect(this._menuOpenId);
-            this._menuOpenId = null;
+    destroy() {
+        this._cancellable.cancel();
+        this._cancellable = null;
+        this._activity.destroy();
+        this._activity = null;
+        this._reader.destroy();
+        this._reader = null;
+        if (this._timeoutId) {
+            GLib.Source.remove(this._timeoutId);
+            this._timeoutId = 0;
+        }
+        if (this._debounceId) {
+            GLib.Source.remove(this._debounceId);
+            this._debounceId = 0;
         }
         if (this._driverWatch) {
-            if (this._driverWatchId)
-                this._driverWatch.disconnect(this._driverWatchId);
+            this._driverWatch.disconnect(this._driverWatchId);
+            this._driverWatchId = 0;
             this._driverWatch.cancel();
             this._driverWatch = null;
         }
         if (this._monitor) {
-            if (this._monitorId)
-                this._monitor.disconnect(this._monitorId);
+            this._monitor.disconnect(this._monitorId);
+            this._monitorId = 0;
             this._monitor.cancel();
             this._monitor = null;
         }
-        super.vfunc_destroy();
+        this._icon.disconnect(this._repaintId);
+        this._repaintId = 0;
+        this._icon = null;
+        this._label = null;
+        this._settings = null;
+        this._lastKnown = {};
+        this._lowNotified = {};
+        super.destroy();
     }
+
 });
 
 export default class RazerBatteryExtension extends Extension {

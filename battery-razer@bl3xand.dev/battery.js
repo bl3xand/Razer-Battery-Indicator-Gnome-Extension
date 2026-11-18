@@ -1,160 +1,142 @@
-// Async, non-blocking sysfs reads for the battery state. Every file read
-// goes through load_contents_async, so the razermouse driver's ~1 s HID
-// timeout on a sleeping mouse runs in a GIO worker thread and never blocks
-// the gnome-shell main loop.
 import GLib from 'gi://GLib';
 import Gio from 'gi://Gio';
 import {SCAN_DIR} from './constants.js';
 
 const DECODER = new TextDecoder();
 
-/**
- * Collect the battery state of every Razer device the kernel driver
- * exposes (sysfs ids look like 0003:1532:00D7.0004 — the part before the
- * last dot identifies the physical device).
- *
- * Per device: charge_level of each interface, best nonzero reading wins
- * (idle interfaces return raw 0 = no data). charge_status is read only
- * for devices with a nonzero level — a sleeping device reads 0 and its
- * charging state is meaningless, so skipping it halves the kernel traffic
- * during sleep.
- *
- * @param {(devices: Record<string, {level: number, charging: boolean}>) => void} callback
- *   invoked once, in the main loop, with raw levels (0-255)
- */
-export function readBatteriesAsync(callback) {
-    listInterfaces(ids => {
-        const byPid = {};
-        for (const id of ids) {
-            const pid = id.substring(0, id.lastIndexOf('.'));
-            (byPid[pid] ??= []).push(id);
-        }
-        const pids = Object.keys(byPid);
-        const devices = {};
-        let pending = pids.length;
-        if (pending === 0) {
-            callback(devices);
-            return;
-        }
-        // Phase 1: charge_level per device (best nonzero across interfaces).
-        for (const pid of pids) {
-            readBest(byPid[pid], level => {
-                devices[pid] = {level, charging: false};
-                if (--pending > 0)
-                    return;
-                // Phase 2: charge_status only for live devices.
-                const live = pids.filter(p => devices[p].level > 0);
-                let waiting = live.length;
-                if (waiting === 0) {
-                    callback(devices);
-                    return;
-                }
-                for (const pid2 of live) {
-                    readCharging(byPid[pid2], charging => {
-                        devices[pid2].charging = charging;
-                        if (--waiting === 0)
-                            callback(devices);
-                    });
-                }
-            });
-        }
-    });
+function checkCancellation(cancellable) {
+    if (cancellable.is_cancelled())
+        throw new GLib.Error(Gio.io_error_quark(),
+            Gio.IOErrorEnum.CANCELLED, 'Battery read cancelled');
 }
 
-/** Enumerate 0003:* interface ids in the driver directory, async. */
-export function listInterfaces(callback) {
-    const dir = Gio.File.new_for_path(SCAN_DIR);
-    dir.enumerate_children_async('standard::*',
-        Gio.FileQueryInfoFlags.NONE, GLib.PRIORITY_DEFAULT, null, (src, res) => {
-            let enumerator;
+export function readIntAsync(path, cancellable) {
+    return new Promise((resolve, reject) => {
+        Gio.File.new_for_path(path).load_contents_async(cancellable, (file, result) => {
+            let bytes;
             try {
-                enumerator = src.enumerate_children_finish(res);
-            } catch (e) {
-                callback([]); // driver not loaded — no Razer devices
+                [, bytes] = file.load_contents_finish(result);
+            } catch (error) {
+                if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                    reject(error);
+                else
+                    resolve(null);
                 return;
             }
-            const ids = [];
-            const next = (src2, res2) => {
-                let infos;
-                try {
-                    infos = src2.next_files_finish(res2);
-                } catch (e) {
-                    infos = [];
-                }
-                if (infos.length === 0) {
-                    try {
-                        enumerator.close(null);
-                    } catch (e) {}
-                    callback(ids);
-                    return;
-                }
-                for (const info of infos) {
-                    const name = info.get_name();
-                    if (name.startsWith('0003:'))
-                        ids.push(name);
-                }
-                enumerator.next_files_async(16, GLib.PRIORITY_DEFAULT, null, next);
-            };
-            enumerator.next_files_async(16, GLib.PRIORITY_DEFAULT, null, next);
+            const text = DECODER.decode(bytes).trim();
+            const value = /^\d+$/.test(text) ? Number(text) : NaN;
+            resolve(Number.isInteger(value) && value >= 0 && value <= 255 ? value : null);
         });
-}
-
-/**
- * Read charge_level from every interface of a device, keep the best
- * nonzero reading. Async, non-blocking.
- */
-export function readBest(interfaceIds, callback) {
-    let best = 0;
-    let pending = interfaceIds.length;
-    if (pending === 0) {
-        callback(best);
-        return;
-    }
-    for (const id of interfaceIds) {
-        readIntAsync(`${SCAN_DIR}/${id}/charge_level`, value => {
-            if (value !== null && value > best)
-                best = value;
-            if (--pending === 0)
-                callback(best);
-        });
-    }
-}
-
-/**
- * Whether a live device is charging: any interface reporting
- * charge_status 1 counts. Single-shot callback.
- */
-export function readCharging(interfaceIds, callback) {
-    let pending = interfaceIds.length;
-    let fired = false;
-    const done = value => {
-        if (!fired) {
-            fired = true;
-            callback(value === 1);
-        }
-    };
-    if (pending === 0) {
-        done(0);
-        return;
-    }
-    for (const id of interfaceIds) {
-        readIntAsync(`${SCAN_DIR}/${id}/charge_status`, value => {
-            if (value === 1)
-                done(1);
-            else if (--pending === 0)
-                done(0);
-        });
-    }
-}
-
-/** Async read a whole sysfs file, parse as integer, null on any failure. */
-export function readIntAsync(path, callback) {
-    Gio.File.new_for_path(path).load_contents_async(null, (src, res) => {
-        try {
-            const [, bytes] = src.load_contents_finish(res);
-            callback(parseInt(DECODER.decode(bytes), 10));
-        } catch (e) {
-            callback(null);
-        }
     });
+}
+
+export async function listInterfaces(directory, cancellable) {
+    const enumerator = await new Promise((resolve, reject) => {
+        Gio.File.new_for_path(directory).enumerate_children_async(
+            'standard::name', Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS,
+            GLib.PRIORITY_DEFAULT, cancellable, (file, result) => {
+                try {
+                    resolve(file.enumerate_children_finish(result));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+    });
+    const ids = [];
+    try {
+        while (true) {
+            checkCancellation(cancellable);
+            const infos = await new Promise((resolve, reject) => {
+                enumerator.next_files_async(16, GLib.PRIORITY_DEFAULT,
+                    cancellable, (source, result) => {
+                        try {
+                            resolve(source.next_files_finish(result));
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+            });
+            if (infos.length === 0)
+                return ids.sort();
+            for (const info of infos) {
+                const name = info.get_name();
+                if (/^0003:1532:[0-9A-Fa-f]{4}\.[0-9A-Fa-f]+$/.test(name))
+                    ids.push(name);
+            }
+        }
+    } finally {
+        // Cleanup must still close the directory after cancellation.
+        await new Promise((resolve, reject) => {
+            enumerator.close_async(GLib.PRIORITY_DEFAULT, null, (source, result) => {
+                try {
+                    source.close_finish(result);
+                    resolve();
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+    }
+}
+
+export class BatteryReader {
+    constructor(directory = SCAN_DIR) {
+        this._directory = directory;
+        this._cancellable = new Gio.Cancellable();
+        this._preferred = new Map();
+        this._pending = null;
+    }
+
+    read() {
+        if (!this._cancellable)
+            return Promise.resolve(null);
+        if (!this._pending) {
+            this._pending = this._collect(this._cancellable).finally(() => {
+                this._pending = null;
+            });
+        }
+        return this._pending;
+    }
+
+    async _collect(cancellable) {
+        const groups = new Map();
+        for (const id of await listInterfaces(this._directory, cancellable)) {
+            const pid = id.substring(0, id.lastIndexOf('.'));
+            if (!groups.has(pid))
+                groups.set(pid, []);
+            groups.get(pid).push(id);
+        }
+        const devices = {};
+        for (const pid of this._preferred.keys()) {
+            if (!groups.has(pid))
+                this._preferred.delete(pid);
+        }
+        // The interfaces share one USB device. Never queue concurrent HID reads.
+        for (const [pid, ids] of groups) {
+            const preferred = this._preferred.get(pid);
+            ids.sort((a, b) => Number(b === preferred) - Number(a === preferred));
+            devices[pid] = {level: 0, charging: false};
+            for (const id of ids) {
+                checkCancellation(cancellable);
+                const base = `${this._directory}/${id}`;
+                const level = await readIntAsync(`${base}/charge_level`, cancellable);
+                checkCancellation(cancellable);
+                if (level === null || level === 0)
+                    continue;
+                const status = await readIntAsync(`${base}/charge_status`, cancellable);
+                checkCancellation(cancellable);
+                devices[pid] = {level, charging: status === 1};
+                this._preferred.set(pid, id);
+                break;
+            }
+        }
+        checkCancellation(cancellable);
+        return devices;
+    }
+
+    destroy() {
+        this._cancellable.cancel();
+        this._cancellable = null;
+        this._preferred.clear();
+    }
 }

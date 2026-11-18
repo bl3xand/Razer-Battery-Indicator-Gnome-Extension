@@ -11,14 +11,21 @@ driver) directly in the GNOME top panel.
 - The icon is drawn from an embedded vector path and recolors itself for
   light/dark panel themes — no image assets
 - Deduplication: a mouse exposes several HID battery interfaces — the
-  extension groups them by device and takes the best nonzero reading
+  extension selects a responding interface and reuses it on the next scan
 - Dead connections (e.g. the dongle while the mouse is charging over cable)
   are hidden automatically
 - ⚡ charging indicator (monochrome, follows text color)
 - Sleep-aware: while the mouse sleeps (sysfs reads 0) the last known charge
   is held instead of dropping the indicator
 - Low-battery notification at a configurable threshold
-- Lightweight polling, zero background processes (runs inside GNOME Shell)
+- One asynchronous scan at a time: 30-second polling while awake, 120 seconds
+  for sleeping devices; hotplug events request a refresh after one second
+- Input resumption after inactivity or switching to a Razer pointer triggers
+  an immediate scan, including when input goes to another application. Native
+  Mutter watches are used instead of polling the pointer or reading on every
+  mouse event; bursts within five seconds are coalesced
+- Disabling cancels pending work and removes all owned timers and monitors
+- No background service or helper process is installed
 - Driver-missing detection: if the OpenRazer kernel driver is absent, the
   indicator shows `!` and the menu offers a guided install
 
@@ -27,12 +34,16 @@ driver) directly in the GNOME top panel.
 ```bash
 git clone https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension.git
 cp -r Razer-Battery-Indicator-Gnome-Extension/battery-razer@bl3xand.dev ~/.local/share/gnome-shell/extensions/
+glib-compile-schemas ~/.local/share/gnome-shell/extensions/battery-razer@bl3xand.dev/schemas
 gnome-extensions enable battery-razer@bl3xand.dev
 ```
 
 On Wayland, log out and back in first so GNOME Shell discovers the extension.
 
-Or grab the package from **extensions.gnome.org** (search "Razer Battery").
+The `dist/` directory contains separate Git/local and extensions.gnome.org
+packages. The store submission is awaiting author response; it is not an
+approved listing. Its menu opens documentation and does not run an installer.
+The Git/local package retains the optional terminal installer.
 
 ## Requirements
 
@@ -78,6 +89,37 @@ Found a problem on your system? **Please open an
 [issue](https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/issues)** —
 include your distro, GNOME Shell version and the output of
 `journalctl -b /usr/bin/gnome-shell | grep battery-razer`.
+
+## Build and check
+
+Build both packages from one source tree:
+
+```bash
+python3 packaging/build.py
+```
+
+- `dist/battery-razer@bl3xand.dev.zip`: local/Git package, compiled settings
+  schema, optional terminal installer launched only by a menu action.
+- `dist/battery-razer@bl3xand.dev-store.zip`: help-only menu action, XML schema,
+  no terminal installer code or compiled schema. EGO assigns its own numeric
+  version. Packaging substitutes `packaging/store-actions.js` for `actions.js`.
+
+Run the isolated checks (Node.js, GJS, GLib schema tools and Python required):
+
+```bash
+python3 tests/run.py
+```
+
+These checks use temporary files and controlled asynchronous responses. They
+verify cancellation, serialized reads, disable/re-enable, hotplug coalescing,
+resource cleanup and reproducible packages. They do not enable the extension
+in the current session or communicate with a real mouse.
+
+Reads still enter the OpenRazer kernel driver. Cancellation prevents further
+extension work; it cannot interrupt a USB request already executing in the
+kernel or guarantee that the driver itself will never hang. Earlier freezes
+were not captured with a GNOME stack trace, so their exact cause remains
+unconfirmed. The isolated tests are not proof of long-term desktop stability.
 
 ## Uninstall
 

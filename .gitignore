@@ -1,2 +1,4 @@
 # build artifacts live in dist/ and ARE committed (EGO upload package)
 # *.zip
+
+.codegraph/
