@@ -21,12 +21,12 @@ export const SCAN_DIR = '/sys/bus/hid/drivers/razermouse';
 // Shown in the menu when the kernel driver is missing: repo page with the
 // one-command installer script (install-driver.sh).
 export const DRIVER_SETUP_URL =
-    'https://github.com/bl3xand/Razer-Battery#openrazer-driver';
+    'https://github.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension#openrazer-driver';
 
 // Raw script URL used by the in-menu installer button (curl | bash).
 // Only included in the Git/local package; the store ships a help-only action.
 export const DRIVER_SETUP_RAW =
-    'https://raw.githubusercontent.com/bl3xand/Razer-Battery/main/install-driver.sh';
+    'https://raw.githubusercontent.com/bl3xand/Razer-Battery-Indicator-Gnome-Extension/main/install-driver.sh';
 
 // U+FE0E forces text presentation of the emoji: rendered as a monochrome
 // glyph that inherits the label's foreground color instead of full-color
