@@ -242,7 +242,7 @@ test('native activity watches coalesce bursts, filter devices and release one-sh
     const watches = new Map();
     const monitor = {
         get_idletime: () => 6000,
-        add_idle_watch_full(ms, flags, cb) {assert.equal(ms, 5000); assert.equal(flags, 1); const id = next++; watches.set(id, {cb, once: false}); return id;},
+        add_idle_watch_full(ms, cb, flags) {assert.equal(ms, 5000); assert.equal(typeof cb, 'function'); assert.equal(flags, 1); const id = next++; watches.set(id, {cb, once: false}); return id;},
         add_user_active_watch(cb) {const id = next++; watches.set(id, {cb, once: true}); return id;},
         remove_watch(id) {assert(watches.delete(id));},
     };

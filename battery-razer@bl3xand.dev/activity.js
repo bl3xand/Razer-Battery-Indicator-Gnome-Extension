@@ -14,7 +14,7 @@ export class ActivityWatch {
         this._activeId = 0;
         // Observe input inactivity even while video playback inhibits screen blanking.
         this._idleId = this._monitor.add_idle_watch_full(INPUT_IDLE_MS,
-            Meta.IdleMonitorWatchFlags.UNINHIBITABLE, () => this._armActive());
+            () => this._armActive(), Meta.IdleMonitorWatchFlags.UNINHIBITABLE);
         this._deviceId = backend.connect('last-device-changed', (source, device) => {
             if (device && device.get_vendor_id() === 0x1532 &&
                 device.get_device_type() === Clutter.InputDeviceType.POINTER_DEVICE)

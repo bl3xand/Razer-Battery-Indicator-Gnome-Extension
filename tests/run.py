@@ -18,6 +18,20 @@ def run(args, **kwargs):
 for p in [*(ROOT/'battery-razer@bl3xand.dev').glob('*.js'), ROOT/'packaging/store-actions.js']:
     run(['node', '--check', str(p)])
 run(['node', '--experimental-vm-modules', '--test', 'tests/regression.test.mjs'])
+# Inspect the actual installed GJS wrapper, not a mock of the native ABI.
+for mutter in sorted(Path('/usr/lib').glob('mutter-*')):
+    version = mutter.name.removeprefix('mutter-')
+    if not (mutter / f'Meta-{version}.typelib').exists():
+        continue
+    env = os.environ.copy()
+    env['GI_TYPELIB_PATH'] = str(mutter)
+    env['LD_LIBRARY_PATH'] = str(mutter)
+    signature = subprocess.check_output(['gjs', '-c',
+        f"imports.gi.versions.Meta='{version}'; print(imports.gi.Meta.IdleMonitor.prototype.add_idle_watch_full);"],
+        env=env, text=True, timeout=10)
+    assert 'interval_msec, callback, flags' in signature, signature
+    print('Native Mutter idle-watch callback signature passed')
+    break
 run(['bash', '-n', 'install-driver.sh'])
 with tempfile.TemporaryDirectory(prefix='.native-test-', dir=ROOT) as tmp:
     p = Path(tmp)
